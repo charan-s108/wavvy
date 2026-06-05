@@ -1,0 +1,12 @@
+__pycache__
+*.pyc
+*.pyo
+.pytest_cache
+chroma_db/
+.venv
+venv
+.env
+*.env.local
+tests/
+k8s/
+scripts/
