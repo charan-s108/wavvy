@@ -1,0 +1,152 @@
+# Wavvy LiveKit Agents worker — Kubernetes Deployment + HPA
+#
+# Scaling model:
+#   Each worker Pod handles N concurrent calls (load_threshold=0.65 → ~8–12 calls per Pod).
+#   HPA scales on CPU utilization as a proxy for call load.
+#   LiveKit Cloud dispatches jobs round-robin across all registered workers.
+#
+# To deploy:
+#   kubectl apply -f worker-deployment.yaml
+#
+# Environment:
+#   All secrets come from the wavvy-secrets Secret object.
+#   See k8s/secrets.yaml.example for the required keys.
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: wavvy-worker
+  labels:
+    app: wavvy-worker
+    component: voice-pipeline
+spec:
+  replicas: 2           # minimum; HPA scales up from here
+  selector:
+    matchLabels:
+      app: wavvy-worker
+  template:
+    metadata:
+      labels:
+        app: wavvy-worker
+        component: voice-pipeline
+    spec:
+      terminationGracePeriodSeconds: 330    # drain_timeout(300s) + 30s buffer
+
+      containers:
+        - name: worker
+          image: wavvy-backend:latest       # replace with your registry image
+          command:
+            - python
+            - -m
+            - voice.agent_worker
+            - start
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "768Mi"
+            limits:
+              cpu: "2000m"
+              memory: "1536Mi"           # headroom above job_memory_limit_mb=512
+
+          env:
+            # LiveKit
+            - name: LIVEKIT_URL
+              valueFrom:
+                secretKeyRef:
+                  name: wavvy-secrets
+                  key: LIVEKIT_URL
+            - name: LIVEKIT_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: wavvy-secrets
+                  key: LIVEKIT_API_KEY
+            - name: LIVEKIT_API_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: wavvy-secrets
+                  key: LIVEKIT_API_SECRET
+
+            # STT / LLM / TTS
+            - name: DEEPGRAM_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: wavvy-secrets
+                  key: DEEPGRAM_API_KEY
+            - name: ELEVENLABS_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: wavvy-secrets
+                  key: ELEVENLABS_API_KEY
+            - name: ELEVENLABS_VOICE_ID
+              valueFrom:
+                secretKeyRef:
+                  name: wavvy-secrets
+                  key: ELEVENLABS_VOICE_ID
+
+            # QA agent
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: wavvy-secrets
+                  key: OPENAI_API_KEY
+
+            # Database
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: wavvy-secrets
+                  key: DATABASE_URL
+
+            # Worker → FastAPI IPC (internal cluster DNS)
+            - name: BACKEND_INTERNAL_URL
+              value: "http://wavvy-api-service:8000"
+
+            - name: ENVIRONMENT
+              value: "production"
+
+          # Graceful shutdown: SIGTERM triggers LiveKit Agents drain (300s window)
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sleep", "5"]  # give k8s time to remove from endpoints
+
+          livenessProbe:
+            exec:
+              command: ["python", "-c", "import livekit.agents; print('ok')"]
+            initialDelaySeconds: 30
+            periodSeconds: 60
+            failureThreshold: 3
+
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: wavvy-worker-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: wavvy-worker
+  minReplicas: 2
+  maxReplicas: 20
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 60    # scale out before hitting load_threshold=0.65
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 30   # react fast to call spikes
+      policies:
+        - type: Pods
+          value: 2
+          periodSeconds: 30
+    scaleDown:
+      stabilizationWindowSeconds: 300  # drain_timeout — don't kill workers mid-call
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 120

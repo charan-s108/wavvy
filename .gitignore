@@ -1,0 +1,46 @@
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+env/
+.pytest_cache/
+
+# ── Environment / Secrets ─────────────────────────────────────────────────────
+.env
+*.env.local
+.env.*
+!.env.example
+
+# ── Databases / Volumes ───────────────────────────────────────────────────────
+backend/chroma_db/
+*.sqlite3
+postgres_data/
+
+# ── Node ──────────────────────────────────────────────────────────────────────
+node_modules/
+frontend/*/dist/
+frontend/*/.cache/
+.cache/
+
+# ── IDE / OS ──────────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# ── Logs ──────────────────────────────────────────────────────────────────────
+*.log
+logs/
+
+# ── Internal project docs (not for public repo) ───────────────────────────────
+CLAUDE.md
+Wavvy_Tech_Overview.md

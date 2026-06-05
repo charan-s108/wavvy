@@ -1,0 +1,97 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --yellow:       #f4f73d;
+  --brand-yellow: #f4f73d;
+  --app-bg:       #000000;
+  --app-bg-mid:   #080808;
+  --app-card:     #101010;
+  --app-border:   rgba(255,255,255,0.06);
+  --app-border-hi:rgba(255,255,255,0.12);
+  --modal-border: rgba(244,247,61,0.28);
+  --app-accent:   #f4f73d;
+  --app-text:     #ffffff;
+}
+
+/* ── Base ──────────────────────────────────────────────────── */
+* { box-sizing: border-box; }
+body { background: #000; color: #fff; font-family: 'Aeonik', system-ui, sans-serif; }
+
+/* ── Glass utility ─────────────────────────────────────────── */
+.glass {
+  background: rgba(255,255,255,0.02);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+}
+
+.glass-card {
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.07);
+  border-radius: 10px;
+}
+
+/* ── Glow ──────────────────────────────────────────────────── */
+.text-glow {
+  text-shadow: 0 0 40px rgba(244,247,61,0.5), 0 0 80px rgba(244,247,61,0.2);
+}
+
+/* ── Typography ────────────────────────────────────────────── */
+.t-h1   { font-family:'Orbikular',system-ui,sans-serif; font-weight:300; font-size:clamp(44px,6vw,80px); line-height:1.08; letter-spacing:-1.6px; text-transform:capitalize; }
+.t-h2   { font-family:'Orbikular',system-ui,sans-serif; font-weight:300; font-size:clamp(32px,4.5vw,64px); line-height:1.04; letter-spacing:-1.2px; }
+.t-h3   { font-family:'Orbikular',system-ui,sans-serif; font-weight:300; font-size:28px; line-height:1.2; letter-spacing:-0.5px; }
+.t-body-24 { font-family:'Aeonik',system-ui,sans-serif; font-weight:300; font-size:clamp(16px,2vw,24px); line-height:1.5; }
+.t-body-18 { font-family:'Aeonik',system-ui,sans-serif; font-weight:400; font-size:18.08px; line-height:27.12px; }
+.t-body-16 { font-family:'Aeonik',system-ui,sans-serif; font-weight:400; font-size:16px; line-height:24px; }
+.t-body-14 { font-family:'Aeonik',system-ui,sans-serif; font-weight:400; font-size:14.08px; line-height:21.12px; }
+.t-caps  { font-family:'Aeonik',system-ui,sans-serif; font-weight:500; font-size:11px; line-height:11px; letter-spacing:1.8px; text-transform:uppercase; }
+
+/* ── Animations ────────────────────────────────────────────── */
+@keyframes callPulse {
+  0%   { box-shadow: 0 0 0 0 rgba(244,247,61,0.5); }
+  70%  { box-shadow: 0 0 0 18px rgba(244,247,61,0); }
+  100% { box-shadow: 0 0 0 0 rgba(244,247,61,0); }
+}
+
+@keyframes callPulseWhite {
+  0%   { box-shadow: 0 0 0 0 rgba(255,255,255,0.15); }
+  70%  { box-shadow: 0 0 0 14px rgba(255,255,255,0); }
+  100% { box-shadow: 0 0 0 0 rgba(255,255,255,0); }
+}
+
+@keyframes slideDown {
+  from { opacity:0; transform:translateY(-20px); }
+  to   { opacity:1; transform:translateY(0); }
+}
+
+@keyframes fadeIn {
+  from { opacity:0; }
+  to   { opacity:1; }
+}
+
+.call-pulse       { animation: callPulse 1.8s ease-in-out infinite; }
+.call-pulse-white { animation: callPulseWhite 2.2s ease-in-out infinite; }
+.animate-fade-in  { animation: fadeIn 0.4s ease forwards; }
+
+/* ── Scrollbar ─────────────────────────────────────────────── */
+::-webkit-scrollbar       { width:3px; }
+::-webkit-scrollbar-track { background:transparent; }
+::-webkit-scrollbar-thumb { background:rgba(255,255,255,0.08); border-radius:2px; }
+
+/* ── Panels ────────────────────────────────────────────────── */
+.panel    { background: var(--app-card); }
+.panel-hi { background: #111; }
+
+/* ── Section labels ────────────────────────────────────────── */
+.section-label {
+  font-size:11px; font-weight:600; letter-spacing:2px;
+  text-transform:uppercase; color:rgba(255,255,255,0.52);
+  font-family:'Aeonik',system-ui,sans-serif;
+}
+
+/* ── Status dots ───────────────────────────────────────────── */
+.status-active   { background:#f4f73d; box-shadow:0 0 6px rgba(244,247,61,0.6); }
+.status-busy     { background:rgba(255,255,255,0.45); }
+.status-inactive { background:rgba(255,255,255,0.15); }
