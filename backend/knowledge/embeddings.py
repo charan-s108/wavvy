@@ -1,44 +1,52 @@
 """
-Local embeddings via sentence-transformers all-MiniLM-L6-v2.
-Zero API cost. 384-dim vectors. Runs on CPU in a thread pool so the
-async event loop is never blocked.
+Embeddings via HuggingFace Inference API — sentence-transformers/all-MiniLM-L6-v2.
+384-dim vectors. Zero local GPU/CPU cost. Model is already hosted on HuggingFace.
 """
-import asyncio
-import functools
 import logging
-from typing import Optional
+
+import httpx
+
+from config import settings
 
 logger = logging.getLogger(__name__)
 
-_model = None
-EMBED_MODEL = "all-MiniLM-L6-v2"
+EMBED_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 EMBED_DIM = 384
+_HF_API_URL = f"https://api-inference.huggingface.co/pipeline/feature-extraction/{EMBED_MODEL}"
 
 
 def init_embeddings(_openai_client=None) -> None:
-    """Load the local model once at startup. Signature compatible with old init_embeddings(openai_client)."""
-    global _model
-    from sentence_transformers import SentenceTransformer
-    logger.info(f"Loading local embedding model: {EMBED_MODEL}")
-    _model = SentenceTransformer(EMBED_MODEL)
-    logger.info(f"Embeddings initialized: {EMBED_MODEL} ({EMBED_DIM}-dim, local, zero API cost)")
+    """No-op — embeddings are served by HF Inference API, always ready."""
+    logger.info("Embeddings ready: %s (HuggingFace Inference API)", EMBED_MODEL)
 
 
 async def embed_texts(texts: list[str]) -> list[list[float]]:
-    """Embed a batch of texts. Returns list of float vectors. Non-blocking."""
-    if not _model:
-        raise RuntimeError("embeddings not initialized — call init_embeddings() first")
+    """Embed a batch of texts via HF Inference API. Returns list of 384-dim vectors."""
     if not texts:
         return []
-    loop = asyncio.get_event_loop()
-    vectors = await loop.run_in_executor(
-        None,
-        functools.partial(_model.encode, texts, convert_to_numpy=True, show_progress_bar=False)
-    )
-    return vectors.tolist()
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        return await _embed_via_api(texts, client)
 
 
 async def embed_single(text: str) -> list[float]:
-    """Embed a single text string."""
     results = await embed_texts([text])
     return results[0]
+
+
+async def _embed_via_api(texts: list[str], client: httpx.AsyncClient) -> list[list[float]]:
+    headers = {"Content-Type": "application/json"}
+    if settings.hf_token:
+        headers["Authorization"] = f"Bearer {settings.hf_token}"
+
+    resp = await client.post(
+        _HF_API_URL,
+        headers=headers,
+        json={"inputs": texts},
+    )
+    resp.raise_for_status()
+    result = resp.json()
+
+    # HF returns shape [n, dim] for batch — normalise any 3-D response
+    if result and isinstance(result[0][0], list):
+        result = [row[0] for row in result]
+    return result

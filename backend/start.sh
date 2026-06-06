@@ -12,7 +12,7 @@ fi
 mkdir -p /data/chroma_db
 export CHROMA_PERSIST_DIR=${CHROMA_PERSIST_DIR:-/data/chroma_db}
 
-# Both processes run in this container — worker calls /api/kb/search on localhost
+# Both processes share this container — worker calls /api/kb/search on localhost
 export BACKEND_INTERNAL_URL=${BACKEND_INTERNAL_URL:-http://localhost:7860}
 
 echo "▶ Running database migrations..."

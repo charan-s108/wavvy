@@ -5,6 +5,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     openai_api_key: str = ""
+    hf_token: str = ""  # HuggingFace token — used for Inference API embeddings
 
     # LiveKit
     livekit_url: str = ""
