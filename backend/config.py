@@ -36,7 +36,9 @@ class Settings(BaseSettings):
     # SIP/PSTN — public URL used as LiveKit webhook target for inbound SIP calls
     public_backend_url: str = "http://localhost:8000"
 
-    # Internal URL workers use to call FastAPI (same host, typically localhost)
+    # Internal URL workers use to call FastAPI.
+    # On HuggingFace both processes share the container — start.sh sets this to :7860.
+    # Local dev uses :8000 (uvicorn default).
     backend_internal_url: str = "http://localhost:8000"
 
     @property
