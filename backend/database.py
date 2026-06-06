@@ -14,6 +14,8 @@ def _make_engine():
         pool_size=20,
         max_overflow=10,
         pool_pre_ping=True,
+        # Required for Supabase/PgBouncer connection pooler compatibility
+        connect_args={"statement_cache_size": 0},
     )
 
 

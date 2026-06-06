@@ -41,6 +41,9 @@ Thumbs.db
 *.log
 logs/
 
+# ── Deployment scripts — local only, never commit ────────────────────────────
+push_hf_secrets.py
+
 # ── Internal project docs (not for public repo) ───────────────────────────────
 CLAUDE.md
 Wavvy_Tech_Overview.md

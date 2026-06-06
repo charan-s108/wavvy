@@ -1,12 +1,16 @@
 #!/bin/sh
 set -e
 
-# Supabase / Neon provide postgres:// — SQLAlchemy asyncpg needs postgresql+asyncpg://
-if [ -n "$DATABASE_URL" ]; then
-  export DATABASE_URL=$(echo "$DATABASE_URL" \
-    | sed 's|^postgres://|postgresql+asyncpg://|' \
-    | sed 's|^postgresql://|postgresql+asyncpg://|')
+# Guard — fail fast with a clear message if DATABASE_URL is missing
+if [ -z "$DATABASE_URL" ]; then
+  echo "ERROR: DATABASE_URL is not set. Add it in HuggingFace Space Settings → Secrets."
+  exit 1
 fi
+
+# Supabase / Neon provide postgres:// — SQLAlchemy asyncpg needs postgresql+asyncpg://
+export DATABASE_URL=$(echo "$DATABASE_URL" \
+  | sed 's|^postgres://|postgresql+asyncpg://|' \
+  | sed 's|^postgresql://|postgresql+asyncpg://|')
 
 # HuggingFace persistent volume — ChromaDB lives here across restarts
 mkdir -p /data/chroma_db
