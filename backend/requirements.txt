@@ -17,8 +17,6 @@ python-multipart==0.0.28
 rank-bm25==0.2.2
 sentence-transformers==3.3.1
 # LiveKit Agents voice pipeline (replaces Pipecat)
-livekit==1.1.8
-livekit-api==0.8.2
 livekit-agents[deepgram,openai,silero,turn-detector,cartesia]~=1.5
 # Auth
 PyJWT==2.9.0
