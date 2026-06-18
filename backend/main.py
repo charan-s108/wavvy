@@ -177,14 +177,6 @@ async def _backfill_kb_postgres(collections: dict) -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Seed DB on startup — idempotent upserts, safe to call every time.
-    # Ensures agents + tenant config exist on a fresh Supabase instance.
-    try:
-        from seed import run_seed
-        await run_seed()
-    except Exception as _seed_err:
-        logger.warning("Startup seed failed (non-fatal): %s", _seed_err)
-
     # Load active tenant config first — all voice/agent code depends on it
     await load_active_config()
 

@@ -33,8 +33,18 @@ echo "▶ Starting LiveKit Worker..."
 python -m voice.agent_worker start &
 WORKER_PID=$!
 
-# If either process exits, kill the other and propagate the exit code
-wait -n $API_PID $WORKER_PID
-EXIT_CODE=$?
-kill $API_PID $WORKER_PID 2>/dev/null
-exit $EXIT_CODE
+# If either process exits, kill the other and propagate the exit code.
+# wait -n is bash-only; poll manually for POSIX sh (HuggingFace uses dash).
+while true; do
+  if ! kill -0 $API_PID 2>/dev/null; then
+    wait $API_PID; EXIT_CODE=$?
+    kill $WORKER_PID 2>/dev/null
+    exit $EXIT_CODE
+  fi
+  if ! kill -0 $WORKER_PID 2>/dev/null; then
+    wait $WORKER_PID; EXIT_CODE=$?
+    kill $API_PID 2>/dev/null
+    exit $EXIT_CODE
+  fi
+  sleep 2
+done
