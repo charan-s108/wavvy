@@ -103,7 +103,6 @@ async def send_2fa(customer_id: str, call_id: str) -> dict:
     session.auth_state.mark_sent(code, customer_id)
 
     logger.info(f"[DEMO] 2FA code for customer {customer_id} on call {call_id}: {code}")
-    print(f"\n{'='*40}\n2FA CODE: {code}\n{'='*40}\n")
 
     return {
         "sent": True,

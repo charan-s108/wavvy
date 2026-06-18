@@ -12,7 +12,7 @@ app_port: 7860
 
 Real-time voice AI CCaaS platform — FastAPI + LiveKit Agents worker.
 
-Two processes run inside this Space via supervisord:
+Two processes run inside this Space:
 - **API** — FastAPI on port 7860 (REST + WebSockets)
 - **Worker** — LiveKit Agents worker (voice pipeline per call)
 

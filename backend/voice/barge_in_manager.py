@@ -12,8 +12,7 @@ logger = logging.getLogger(__name__)
 
 class BargeInManager:
     """
-    Coordinates barge-in across the Pipecat pipeline.
-    Integrated with PipelineTask via allow_interruptions=True + frame cancellation.
+    Coordinates barge-in across the LiveKit Agents pipeline.
     """
 
     def __init__(self):
@@ -22,7 +21,7 @@ class BargeInManager:
     async def on_user_speech_start(self, task: Any, session: Any) -> None:
         """
         Called immediately when VAD detects user speech start.
-        - Signals Pipecat to cancel in-flight TTS frames
+        - Signals the agent to cancel in-flight TTS frames
         - Clears pending audio queue
         - Preserves workflow_session state (does NOT reset pending_action)
         - Only cancels audio — not orchestration state
@@ -55,7 +54,7 @@ class BargeInManager:
         from session.call_session import TurnState
         session.turn_state = TurnState.INTERRUPTED
 
-        # Cancel in-flight TTS via Pipecat task queue
+        # Cancel in-flight TTS via agent task
         if task:
             try:
                 await task.cancel_task()

@@ -8,6 +8,7 @@ from agents.companion_agent import run_mid_call_companion, run_acw_agent
 from routers.auth_router import verify_agent_token
 from session.call_session import ACTIVE_CALLS
 from config import settings
+from agents.investigation_agent import run_case_investigation
 
 logger = logging.getLogger(__name__)
 
@@ -205,6 +206,7 @@ async def agent_websocket(websocket: WebSocket, token: str = ""):
                             previous_mood=previous_mood,
                             workflow_type=_get_workflow_type(sess),
                             completed_actions=sess.completed_actions if sess else None,
+                            session=sess,
                         )
                     )
 
@@ -219,29 +221,27 @@ async def agent_websocket(websocket: WebSocket, token: str = ""):
                 transcript_buffer = []
 
             elif msg_type == "end_call":
-                resolved_call_id = _find_call_id_for_ws()
+                # Frontend must send call_id; fall back to session scan if missing
+                resolved_call_id = msg.get("call_id") or _find_call_id_for_ws()
                 if resolved_call_id:
+                    current_call_id = resolved_call_id
                     sess = ACTIVE_CALLS.get(resolved_call_id)
-                    # Always use the full session history as the authoritative transcript.
-                    # transcript_buffer only has agent-side lines typed via Web Speech API;
-                    # it is missing all customer utterances that arrived via deliver_transcript_line.
-                    # session.conversation_history has every turn from both sides.
-                    if sess and sess.conversation_history:
-                        acw_transcript = [
-                            {"speaker": m.get("role", "user"), "text": m.get("content", "")}
-                            for m in sess.conversation_history
-                            if m.get("content")
-                        ]
-                        # Append any agent lines from transcript_buffer that occurred
-                        # after the last session history entry (most-recent human speech).
+                    # Zero-ACW path: use pre-built live_documentation if available
+                    live_doc = getattr(sess, "_live_documentation", None) if sess else None
+                    if live_doc and live_doc.get("summary"):
+                        await websocket.send_text(json.dumps({"type": "acw_ready", **live_doc}))
+                    else:
+                        # Fallback: LLM-generated ACW.
+                        # _build_transcript_from_session maps role→speaker correctly
+                        # (skips system messages; maps user→customer, assistant→fin).
+                        acw_transcript = _build_transcript_from_session(sess) if sess else []
                         for line in transcript_buffer:
                             if line not in acw_transcript:
                                 acw_transcript.append(line)
-                    else:
-                        acw_transcript = list(transcript_buffer)
-                    asyncio.create_task(
-                        _send_acw(websocket, acw_transcript, current_customer, resolved_call_id)
-                    )
+                        asyncio.create_task(
+                            _send_acw(websocket, acw_transcript, current_customer, resolved_call_id,
+                                      handoff_bundle=sess.handoff_bundle if sess else None)
+                        )
 
             elif msg_type == "acw_submit":
                 resolved_call_id = _find_call_id_for_ws()
@@ -384,8 +384,12 @@ async def _send_escalation_to_agent(app_state, connected: dict, item: dict) -> N
                     handoff_bundle,
                     workflow_type=_get_workflow_type(session),
                     completed_actions=session.completed_actions if session else None,
+                    session=session,
                 )
             )
+            # Fire Case Intelligence Engine — runs concurrently, delivers before agent answers
+            if session:
+                asyncio.create_task(run_case_investigation(ws, session, call_id))
             logger.info(f"Escalated call {call_id} delivered to agent {agent_id}")
             return
         except Exception as e:
@@ -397,6 +401,35 @@ async def _send_escalation_to_agent(app_state, connected: dict, item: dict) -> N
         app_state.pending_escalations = []
     app_state.pending_escalations.append(item)
     logger.warning(f"Escalation for {call_id} re-queued — all agents unreachable")
+
+
+async def _update_sentiment(ws: WebSocket, session, call_id: str, text: str) -> None:
+    """Score customer sentiment and send a sentiment_update event to the agent console."""
+    try:
+        from voice.sentiment import score_sentiment
+        score = await score_sentiment(text)
+        if score is None:
+            return
+        if session:
+            session.sentiment_scores.append(score)
+        if score >= 0.65:
+            mood = "satisfied"
+        elif score >= 0.5:
+            mood = "calm"
+        elif score >= 0.35:
+            mood = "curious"
+        elif score >= 0.2:
+            mood = "frustrated"
+        else:
+            mood = "angry"
+        await ws.send_text(json.dumps({
+            "type":    "sentiment_update",
+            "score":   score,
+            "mood":    mood,
+            "call_id": call_id,
+        }))
+    except Exception as exc:
+        logger.debug("Sentiment scoring skipped: %s", exc)
 
 
 async def _decline_escalation(call_id: str) -> None:
@@ -447,6 +480,10 @@ async def deliver_transcript_line(app_state, speaker: str, text: str, call_id: s
     ]
     transcript.append({"speaker": speaker, "text": text})
 
+    # Real-time sentiment scoring for customer utterances
+    if speaker == "customer":
+        asyncio.create_task(_update_sentiment(ws, session, call_id, text))
+
     asyncio.create_task(
         _send_companion_update(
             ws,
@@ -455,6 +492,7 @@ async def deliver_transcript_line(app_state, speaker: str, text: str, call_id: s
             session.handoff_bundle,
             workflow_type=_get_workflow_type(session),
             completed_actions=session.completed_actions,
+            session=session,
         )
     )
 
@@ -494,7 +532,9 @@ async def _send_companion_update(
     previous_mood: str = "calm",
     workflow_type: str | None = None,
     completed_actions: set | None = None,
+    session=None,
 ) -> dict:
+    previous_nudge = getattr(session, "_last_nudge", None) if session else None
     try:
         update = await run_mid_call_companion(
             transcript,
@@ -503,7 +543,23 @@ async def _send_companion_update(
             workflow_type=workflow_type,
             previous_mood=previous_mood,
             completed_actions=completed_actions,
+            previous_nudge=previous_nudge,
         )
+        # Track nudge for dedup on next turn
+        nudge = update.get("nudge")
+        if session and nudge:
+            session._last_nudge = nudge
+        # Merge documentation_update into session._live_documentation
+        doc_update = update.get("documentation_update")
+        if session and isinstance(doc_update, dict):
+            if not session._live_documentation:
+                session._live_documentation = {}
+            if doc_update.get("summary"):
+                session._live_documentation["summary"] = doc_update["summary"]
+            new_items = doc_update.get("action_items") or []
+            if new_items:
+                existing = session._live_documentation.get("action_items", [])
+                session._live_documentation["action_items"] = existing + new_items
         await ws.send_text(json.dumps({"type": "companion_update", **update}))
         return update
     except Exception as e:
@@ -584,6 +640,18 @@ async def _execute_approved_action(
 
         logger.info("[%s] Action '%s' executed by %s", call_id, action_name, approved_by)
 
+        # Re-fire companion so nudge updates to reflect the completed action
+        sess = ACTIVE_CALLS.get(call_id)
+        if sess:
+            _tx = _build_transcript_from_session(sess)
+            _customer = sess.customer_profile or {}
+            asyncio.create_task(_send_companion_update(
+                ws, _tx, _customer,
+                handoff_bundle=sess.handoff_bundle,
+                completed_actions=sess.completed_actions,
+                session=sess,
+            ))
+
     except (ActionNotFoundError, WorkflowMismatchError, ActionExecutionError) as exc:
         await ws.send_text(json.dumps({
             "type": "action_result",
@@ -592,6 +660,14 @@ async def _execute_approved_action(
             "message": str(exc),
         }))
         logger.warning("[%s] Action '%s' failed: %s", call_id, action_name, exc)
+        # Re-fire companion even on failure so nudge updates with the error context
+        sess = ACTIVE_CALLS.get(call_id)
+        if sess:
+            asyncio.create_task(_send_companion_update(
+                ws, _build_transcript_from_session(sess), sess.customer_profile or {},
+                handoff_bundle=sess.handoff_bundle,
+                completed_actions=sess.completed_actions, session=sess,
+            ))
     except Exception as exc:
         await ws.send_text(json.dumps({
             "type": "action_result",
@@ -602,14 +678,28 @@ async def _execute_approved_action(
         logger.exception("[%s] Unexpected error in action '%s'", call_id, action_name)
 
 
+def _build_transcript_from_session(sess) -> list[dict]:
+    """Convert conversation_history (OpenAI format) to speaker/text list for companion + ACW."""
+    lines = []
+    for m in (getattr(sess, "conversation_history", None) or []):
+        role    = m.get("role", "")
+        content = m.get("content") or ""
+        if not content or role == "system":
+            continue
+        speaker = "customer" if role == "user" else "fin"
+        lines.append({"speaker": speaker, "text": content[:400]})
+    return lines
+
+
 async def _send_acw(
     ws: WebSocket,
     transcript: list[dict],
     customer: dict,
     call_id: str,
+    handoff_bundle: dict | None = None,
 ) -> None:
     try:
-        acw = await run_acw_agent(transcript, customer, call_id)
+        acw = await run_acw_agent(transcript, customer, call_id, handoff_bundle=handoff_bundle)
         await ws.send_text(json.dumps({"type": "acw_ready", **acw}))
     except Exception as e:
         logger.error(f"ACW generation error: {e}")

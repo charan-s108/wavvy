@@ -45,7 +45,7 @@ async def get_coaching_pack(pack_id: str):
 
 @router.get("/api/agents")
 async def list_agents():
-    """Return all agent profiles — used by AgentSelector in supervisor."""
+    """Return all agent profiles — used by AgentSelector in admin."""
     try:
         from database import AsyncSessionLocal
         from models.agent_profile import AgentProfile

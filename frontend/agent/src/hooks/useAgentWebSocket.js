@@ -14,6 +14,8 @@ export function useAgentWebSocket({
   onAuthError,
   onActionResult,
   onActivityEvent,
+  onCaseInvestigation,
+  onSentimentUpdate,
 }) {
   const wsRef     = useRef(null)
   const retryRef  = useRef(0)
@@ -22,11 +24,13 @@ export function useAgentWebSocket({
   const callbacks = useRef({
     onIncomingCall, onTranscript, onCompanionUpdate, onAcwReady, onCallClosed,
     onAgentReady, onStatusUpdated, onAuthError, onActionResult, onActivityEvent,
+    onCaseInvestigation, onSentimentUpdate,
   })
   useEffect(() => {
     callbacks.current = {
       onIncomingCall, onTranscript, onCompanionUpdate, onAcwReady, onCallClosed,
       onAgentReady, onStatusUpdated, onAuthError, onActionResult, onActivityEvent,
+      onCaseInvestigation, onSentimentUpdate,
     }
   })
 
@@ -77,6 +81,12 @@ export function useAgentWebSocket({
         case 'activity_event':
           cb.onActivityEvent?.(msg)
           break
+        case 'case_investigation':
+          cb.onCaseInvestigation?.(msg)
+          break
+        case 'sentiment_update':
+          cb.onSentimentUpdate?.(msg)
+          break
         case 'otp_sent':
           // Voice AI sent an OTP — forward as an activity event so it surfaces in the timeline
           cb.onActivityEvent?.({
@@ -126,15 +136,15 @@ export function useAgentWebSocket({
     }
   }, [connect])
 
-  const sendTranscriptLine = useCallback((text) => {
+  const sendTranscriptLine = useCallback((text, callId) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({ type: 'transcript_line', text }))
+      wsRef.current.send(JSON.stringify({ type: 'transcript_line', text, call_id: callId }))
     }
   }, [])
 
-  const sendEndCall = useCallback(() => {
+  const sendEndCall = useCallback((callId) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({ type: 'end_call' }))
+      wsRef.current.send(JSON.stringify({ type: 'end_call', call_id: callId }))
     }
   }, [])
 

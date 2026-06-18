@@ -8,6 +8,11 @@ import {
 } from 'lucide-react'
 import { useAgentWebSocket } from './hooks/useAgentWebSocket.js'
 import LoginPage             from './LoginPage.jsx'
+import HandoffCard           from './components/console/HandoffCard.jsx'
+import DataAlerts            from './components/companion/DataAlerts.jsx'
+import CaseAnalysis          from './components/companion/CaseAnalysis.jsx'
+import Timeline              from './components/companion/Timeline.jsx'
+import LiveDocumentation     from './components/companion/LiveDocumentation.jsx'
 // SIM — remove this import to disable simulation
 import { useSimulation, SIM_STEP_LABELS }  from './simulation.js'
 
@@ -110,6 +115,11 @@ export default function AgentDesktop() {
   // Account update form state: keyed by action.id
   const [acctUpdateInputs,  setAcctUpdateInputs]  = useState({})
 
+  /* ── Case Intelligence ────────────────────────────────────── */
+  const [caseInvestigation, setCaseInvestigation] = useState(null)
+  const [openQuestions,     setOpenQuestions]     = useState([])
+  const [liveDoc,           setLiveDoc]           = useState(null)
+
   /* ── Resizable columns ────────────────────────────────────── */
   const [leftWidth,  setLeftWidth]  = useState(() => parseInt(localStorage.getItem('wavvy_col_left')  || '260'))
   const [rightWidth, setRightWidth] = useState(() => parseInt(localStorage.getItem('wavvy_col_right') || '320'))
@@ -164,9 +174,14 @@ export default function AgentDesktop() {
     const lead    = bundle.lead || {}
     const SENTIMENT_TO_MOOD = { positive: 'satisfied', neutral: 'calm', negative: 'frustrated' }
     const customer = {
-      name:   lead.name  || 'Customer',
-      email:  lead.email || '',
-      intent: (lead.intent || '').replace(/_/g, ' '),
+      name:           lead.name  || 'Customer',
+      email:          lead.email || '',
+      phone:          lead.phone || '',
+      intent:         (lead.intent || '').replace(/_/g, ' '),
+      account_type:   lead.account_type || '',
+      account_status: lead.account_status || 'active',
+      kyc_status:     lead.kyc_status || '',
+      fraud_hold:     lead.fraud_hold_active || false,
     }
     const handoff  = { reason: bundle.reason || 'Customer request' }
     const voiceTx  = (msg.voice_transcript || []).map(l => ({ ...l, time: l.time || tsNow() }))
@@ -185,6 +200,7 @@ export default function AgentDesktop() {
     setSentimentHistory([]); setResolutionProb(null); setSentimentTrend('stable')
     setRiskFlags([]); setAcwPreview(null)
     setAcwData(null); setSummaryText(''); setResolution('resolved'); setAcwSubmitted(false)
+    setCaseInvestigation(null); setOpenQuestions([]); setLiveDoc(null)
     setCallerState('incoming')
 
     // Persist so page refresh restores the incoming-call banner immediately,
@@ -233,6 +249,27 @@ export default function AgentDesktop() {
     if (msg.sentiment_trend) setSentimentTrend(msg.sentiment_trend)
     if (Array.isArray(msg.risk_flags))  setRiskFlags(msg.risk_flags)
     if (msg.acw_preview?.summary)       setAcwPreview(msg.acw_preview)
+    // Case Intelligence live updates
+    if (msg.documentation_update?.summary) {
+      setLiveDoc(prev => ({
+        ...(prev || {}),
+        summary: msg.documentation_update.summary,
+        action_items: [...(prev?.action_items || []), ...(msg.documentation_update.action_items || [])],
+      }))
+    }
+    if (Array.isArray(msg.new_open_questions) && msg.new_open_questions.length) {
+      setOpenQuestions(prev => {
+        const existing = new Set(prev.map(q => (typeof q === 'string' ? q : q.question)))
+        const newOnes = msg.new_open_questions.filter(q => !existing.has(typeof q === 'string' ? q : q.question))
+        return newOnes.length ? [...prev, ...newOnes] : prev
+      })
+    }
+    if (Array.isArray(msg.resolved_questions) && msg.resolved_questions.length) {
+      setOpenQuestions(prev => prev.filter(q => {
+        const text = typeof q === 'string' ? q : q.question
+        return !msg.resolved_questions.includes(text)
+      }))
+    }
   }, [])
 
   const onAcwReady = useCallback((msg) => {
@@ -278,12 +315,26 @@ export default function AgentDesktop() {
     ])
   }, [])
 
+  const onCaseInvestigation = useCallback((msg) => {
+    setCaseInvestigation(msg)
+    if (Array.isArray(msg.open_questions)) setOpenQuestions(msg.open_questions)
+    if (msg.live_documentation?.summary) setLiveDoc(msg.live_documentation)
+  }, [])
+
+  const onSentimentUpdate = useCallback((msg) => {
+    if (msg.mood) {
+      setCustomerMood(msg.mood)
+      setSentimentHistory(prev => [...prev.slice(-9), { mood: msg.mood }])
+    }
+  }, [])
+
   const {
     sendEndCall, sendAcwSubmit, sendSetStatus, sendDeclineCall,
     sendActionApproved, sendActionRejected,
   } = useAgentWebSocket({
     onIncomingCall, onTranscript, onCompanionUpdate, onAcwReady, onCallClosed, onStatusUpdated,
     onAuthError: handleLogout, onActionResult, onActivityEvent,
+    onCaseInvestigation, onSentimentUpdate,
   })
 
   const handleStatusChange = useCallback((s) => {
@@ -322,6 +373,7 @@ export default function AgentDesktop() {
     setActivityTimeline, setSentimentHistory,
     setResolutionProb, setSentimentTrend,
     setRiskFlags, setAcwPreview,
+    setCaseInvestigation, setOpenQuestions, setLiveDoc,
   })
   useEffect(() => () => clearSim(), [clearSim])
 
@@ -366,7 +418,7 @@ export default function AgentDesktop() {
   }, [callId, customer])
 
   const handleEndCall = () => {
-    sendEndCall()
+    sendEndCall(callId)   // callId included so backend can always find the session
     // Optimistic: transition immediately so the button doesn't freeze.
     // onAcwReady will update summaryText when the backend responds.
     setCallerState('acw')
@@ -395,6 +447,7 @@ export default function AgentDesktop() {
       setSuggestedActions([]); setActionStatuses({}); setActivityTimeline([])
       setSentimentHistory([]); setResolutionProb(null); setSentimentTrend('stable')
       setRiskFlags([]); setAcwPreview(null)
+      setCaseInvestigation(null); setOpenQuestions([]); setLiveDoc(null)
     }, 1600)
   }
 
@@ -431,7 +484,7 @@ export default function AgentDesktop() {
 
   /* ── Render ───────────────────────────────────────────────── */
   return (
-    <div className="w-full h-screen bg-black text-white flex flex-col font-sans select-none overflow-hidden">
+    <div className="w-full h-screen bg-black text-white flex flex-col font-sans overflow-hidden">
 
       {/* ══ HEADER ═══════════════════════════════════════════════ */}
       <header className="glass h-14 flex items-center justify-between px-5 md:px-8 shrink-0 z-20">
@@ -552,66 +605,6 @@ export default function AgentDesktop() {
       {/* ══ 3-COLUMN WORKSPACE ═══════════════════════════════════ */}
       <div className="flex-1 flex overflow-hidden relative">
 
-        {/* ── INCOMING CALL OVERLAY ──────────────────────────── */}
-        <AnimatePresence>
-          {callerState === 'incoming' && (
-            <motion.div
-              initial={{ y: -80, opacity: 0 }}
-              animate={{ y: 0, opacity: 1 }}
-              exit={{ y: -80, opacity: 0 }}
-              transition={{ type: 'spring', stiffness: 320, damping: 30 }}
-              className="absolute inset-x-4 top-4 z-50 rounded-[18px] p-5 md:p-6 flex flex-col md:flex-row items-start md:items-center justify-between gap-5"
-              style={{
-                background: 'rgba(6,6,6,0.96)',
-                backdropFilter: 'blur(32px)',
-                border: `1px solid ${Ya(0.3)}`,
-                boxShadow: `0 20px 60px rgba(0,0,0,0.9), 0 0 0 1px ${Ya(0.06)}`,
-              }}
-            >
-              <div className="flex items-center gap-4">
-                <div
-                  className="w-12 h-12 rounded-full flex items-center justify-center shrink-0 call-pulse"
-                  style={{ background: Ya(0.07), border: `1px solid ${Ya(0.28)}`, color: Y }}
-                >
-                  <Phone size={20} />
-                </div>
-                <div>
-                  <span className="t-caps text-[11px] mb-1.5 block" style={{ color: Y }}>Incoming Call</span>
-                  <h4 className="text-base font-medium text-white">
-                    {customer?.name || 'Customer'} is on the line
-                  </h4>
-                  {handoff?.reason && (
-                    <p className="text-[13px] text-white/60 mt-0.5 line-clamp-1">{handoff.reason}</p>
-                  )}
-                </div>
-              </div>
-              <div className="flex items-center gap-2.5 w-full md:w-auto">
-                <motion.button
-                  whileTap={{ scale: 0.97 }}
-                  onClick={handleDeclineCall}
-                  className="flex-1 md:flex-none px-5 py-2.5 rounded-full text-[13px] font-medium transition-all"
-                  style={{
-                    background: Wa(0.04),
-                    border: `1px solid ${Wa(0.12)}`,
-                    color: Wa(0.6),
-                  }}
-                  onMouseEnter={e => { e.currentTarget.style.background = Wa(0.08); e.currentTarget.style.color = Wa(0.85) }}
-                  onMouseLeave={e => { e.currentTarget.style.background = Wa(0.04); e.currentTarget.style.color = Wa(0.6) }}
-                >
-                  Decline
-                </motion.button>
-                <motion.button
-                  whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }}
-                  onClick={handleAcceptCall}
-                  className="flex-1 md:flex-none px-7 py-2.5 rounded-full text-[13px] font-bold tracking-wider transition-all"
-                  style={{ background: Y, color: '#000', boxShadow: `0 0 20px ${Ya(0.22)}` }}
-                >
-                  ANSWER CALL
-                </motion.button>
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
 
         {/* ══ COLUMN 1 — Context ══════════════════════════════ */}
         <div
@@ -630,7 +623,41 @@ export default function AgentDesktop() {
                   <div>
                     <p className="text-sm font-medium text-white">{customer.name}</p>
                     {customer.email && <p className="text-[13px] text-white/62 mt-0.5">{customer.email}</p>}
+                    {customer.phone && <p className="text-[13px] text-white/45 mt-0.5 font-mono">{customer.phone}</p>}
                   </div>
+                  {(customer.account_type || customer.account_status) && (
+                    <div className="flex flex-wrap gap-1.5">
+                      {customer.account_type && (
+                        <span className="text-[11px] px-2 py-0.5 rounded-full capitalize"
+                          style={{ background: Ya(0.07), color: Y, border: `1px solid ${Ya(0.18)}` }}>
+                          {customer.account_type}
+                        </span>
+                      )}
+                      {customer.account_status && customer.account_status !== 'active' && (
+                        <span className="text-[11px] px-2 py-0.5 rounded-full capitalize"
+                          style={{ background: 'rgba(252,83,91,0.08)', color: '#fc535b', border: '1px solid rgba(252,83,91,0.22)' }}>
+                          {customer.account_status}
+                        </span>
+                      )}
+                      {customer.kyc_status && customer.kyc_status !== 'verified' && (
+                        <span className="text-[11px] px-2 py-0.5 rounded-full capitalize"
+                          style={{ background: 'rgba(250,188,45,0.08)', color: '#fabc2d', border: '1px solid rgba(250,188,45,0.22)' }}>
+                          KYC: {customer.kyc_status}
+                        </span>
+                      )}
+                      {customer.fraud_hold && (
+                        <span className="text-[11px] px-2 py-0.5 rounded-full flex items-center gap-1"
+                          style={{ background: 'rgba(252,83,91,0.10)', color: '#fc535b', border: '1px solid rgba(252,83,91,0.28)' }}>
+                          ⚠ Fraud Hold
+                        </span>
+                      )}
+                    </div>
+                  )}
+                  {customer.intent && (
+                    <p className="text-[12px] leading-relaxed" style={{ color: Wa(0.55) }}>
+                      <span style={{ color: Wa(0.35) }}>Intent: </span>{customer.intent}
+                    </p>
+                  )}
                 </div>
               </div>
 
@@ -931,8 +958,19 @@ export default function AgentDesktop() {
             </motion.div>
           )}
 
-          {/* ─ IDLE / INCOMING ─ */}
-          {(callerState === 'idle' || callerState === 'incoming') && (
+          {/* ─ INCOMING — HandoffCard fills Column 2 ─ */}
+          {callerState === 'incoming' && (
+            <HandoffCard
+              customer={customer}
+              handoff={handoff}
+              caseInvestigation={caseInvestigation}
+              onAccept={handleAcceptCall}
+              onDecline={handleDeclineCall}
+            />
+          )}
+
+          {/* ─ IDLE ─ */}
+          {callerState === 'idle' && (
             <div className="flex-1 flex flex-col items-center justify-center gap-8 p-12 text-center">
               <div className="relative flex items-center justify-center">
                 {agentStatus === 'active' && (
@@ -1024,6 +1062,15 @@ export default function AgentDesktop() {
 
             {callerState === 'active' ? (
               <>
+                {/* ── 0. CASE INTELLIGENCE ─────────────────────── */}
+                <DataAlerts inconsistencies={caseInvestigation?.data_inconsistencies || []} />
+                <CaseAnalysis
+                  whatHappened={caseInvestigation?.what_happened}
+                  knownFacts={caseInvestigation?.known_facts || []}
+                  openQuestions={openQuestions}
+                />
+                <Timeline events={caseInvestigation?.timeline || []} />
+
                 {/* ── 1. OPERATIONAL ACTIONS ──────────────────── */}
                 <AnimatePresence>
                   {suggestedActions.filter(a => {
@@ -1432,6 +1479,7 @@ export default function AgentDesktop() {
               </div>
             )}
           </div>
+          <LiveDocumentation liveDoc={liveDoc} />
         </div>
 
       </div>

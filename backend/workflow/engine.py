@@ -60,6 +60,28 @@ class WorkflowProgress:
     pending_consent_step: Optional[str] = None   # which step is waiting for answer
 
 
+# ── In-memory workflow accessors ──────────────────────────────────────────────
+
+def load_workflow(workflow_id: str) -> Any:
+    """Return WorkflowDefinition from the in-memory cache, or None."""
+    try:
+        from config_loader import get_active_workflows
+        for wf in get_active_workflows():
+            if wf.id == workflow_id:
+                return wf
+    except Exception:
+        pass
+    return None
+
+
+def load_node(workflow_id: str, node_id: str) -> Any:
+    """Return WorkflowNode from the in-memory cache, or None."""
+    wf = load_workflow(workflow_id)
+    if wf is None:
+        return None
+    return wf.nodes.get(node_id)
+
+
 class WorkflowRunner:
     """
     Stateless resolver that translates (step_name, result_key) pairs into

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { PhoneOff, Hash, Mic, MicOff, Headphones } from 'lucide-react'
 import { motion, AnimatePresence } from 'motion/react'
 
@@ -74,14 +74,26 @@ export default function CallScreen({
   humanConnected = false,
   otpCode        = null,
 }) {
-  const [keypadOpen,   setKeypadOpen]   = useState(false)
-  const [keypadBuffer, setKeypadBuffer] = useState('')
-  const [elapsed,      setElapsed]      = useState(0)
+  const [keypadOpen,        setKeypadOpen]        = useState(false)
+  const [keypadBuffer,      setKeypadBuffer]      = useState('')
+  const [elapsed,           setElapsed]           = useState(0)
+  const [showJoinedBanner,  setShowJoinedBanner]  = useState(false)
+  const prevHumanConnected = useRef(false)
 
   useEffect(() => {
     const id = setInterval(() => setElapsed(s => s + 1), 1000)
     return () => clearInterval(id)
   }, [])
+
+  // Show a brief "Specialist connected" banner when humanConnected first becomes true
+  useEffect(() => {
+    if (humanConnected && !prevHumanConnected.current) {
+      setShowJoinedBanner(true)
+      const t = setTimeout(() => setShowJoinedBanner(false), 3000)
+      prevHumanConnected.current = true
+      return () => clearTimeout(t)
+    }
+  }, [humanConnected])
 
   // Auto-open keypad when OTP arrives
   useEffect(() => {
@@ -257,6 +269,28 @@ export default function CallScreen({
 
         </AnimatePresence>
       </div>
+
+      {/* ── Specialist joined banner (auto-dismisses after 3s) ── */}
+      <AnimatePresence>
+        {showJoinedBanner && (
+          <motion.div
+            initial={{ opacity: 0, y: -6 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -6 }}
+            transition={{ duration: 0.22 }}
+            className="flex items-center justify-center gap-2 mx-4 mb-1 px-3 py-2 rounded-xl flex-shrink-0"
+            style={{
+              background: 'rgba(29,158,117,0.08)',
+              border: '1px solid rgba(29,158,117,0.22)',
+            }}
+          >
+            <span className="block w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: 'var(--app-success)' }} />
+            <span className="t-caps" style={{ color: 'var(--app-success)', fontSize: '9px' }}>
+              Specialist connected — you can speak now
+            </span>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* ── Controls bar ────────────────────────────────────────── */}
       <div

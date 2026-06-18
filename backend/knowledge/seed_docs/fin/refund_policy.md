@@ -1,78 +1,25 @@
 # Refund Policy
 
-## Eligibility
+## When a failed payment is eligible for a refund
 
-Fin can initiate refunds directly using the `initiate_refund` tool. A refund may be initiated when:
+Fin can initiate a refund directly when a payment was debited from the customer's account but the transaction did not complete — the transaction status must be failed. Fin also initiates a refund when a duplicate charge resulted in one failed transaction alongside a completed one, or when an unauthorized charge occurred and the transaction status is failed.
 
-1. A payment was debited but the transaction did not complete — **status must be `failed`**
-2. A duplicate charge resulted in one `failed` transaction alongside a `completed` one
-3. An unauthorized charge was made and the transaction status is `failed`
+Fin does not initiate refunds for completed transactions — those require a formal dispute, not a refund. Fin does not initiate refunds when a refund is already underway — if the status is refund initiated or refund processing, Fin gives the customer the timeline without re-initiating. Fin does not initiate refunds when the refund has already been processed — if the status is refund completed, Fin tells the customer to check their account or bank. Fin does not initiate refunds when the transaction is flagged for fraud review. Fin does not initiate refunds when there is a KYC hold on the account. Fin does not initiate refunds for transactions older than ninety days — these require manager approval and escalation.
 
-Refunds are **not initiated by Fin** for:
-- Transactions with status `completed` — these require a formal dispute via `raise_dispute`
-- Transactions with status `refund_initiated` or `refund_processing` — already in progress
-- Transactions with status `refund_completed` — already processed
-- Transactions with status `flagged` — fraud review required first
-- Transactions with status `kyc_hold` — KYC must be resolved first
-- Transactions older than 90 days — requires manager approval
+Transactions at or above fifty thousand rupees are not refunded directly by Fin regardless of eligibility. Fin escalates these to the senior support team for manual approval.
 
-## Status-Based Response Rules
+## Step-by-step process to initiate a refund
 
-Before initiating a refund, Fin checks the transaction status and responds accordingly:
+Fin follows a specific sequence for every refund. First, Fin verifies the customer's identity using their registered phone number. Second, Fin looks up the transaction to confirm its status is failed. Third, Fin sends an OTP to the customer and verifies the code. Fourth, Fin initiates the refund. Fifth, Fin confirms the refund case ID and the expected timeline to the customer. The customer should keep the refund case reference for any follow-up. Fin will not initiate the same refund twice in one call — if a refund has already been opened in the current session, Fin confirms the existing case ID and timeline.
 
-| Transaction Status | Fin's Action |
-|---|---|
-| `failed` | Initiate refund (eligible) |
-| `refund_initiated` | Refund already underway — give 3–5 business day timeline |
-| `refund_processing` | Refund in transit — give timeline, no re-initiation |
-| `refund_completed` | Refund processed — ask customer to check their account or bank |
-| `completed` | Not eligible for refund — offer to raise a dispute instead |
-| `flagged` | Fraud review required — escalate to fraud team immediately |
-| `kyc_hold` | Account KYC hold — escalate to KYC team |
-| `compliance_hold` | Regulatory hold — escalate to compliance team |
+## How long refunds take by payment method and what to do if not received
 
-## Session Idempotency
+Wallet and app balance refunds are processed on the same business day. Debit card refunds take three to five business days. Credit card refunds take five to seven business days. Bank account refunds via NEFT take three to seven business days. International card refunds take seven to ten business days. All timelines begin from the day the refund is initiated, not the day the customer reports the issue.
 
-Fin will not initiate the same refund twice in one call. If a refund has already been opened in the current session, Fin confirms the case ID and timeline without re-initiating.
+Fin never promises same-day refunds unless the payment method is confirmed to be a wallet or app balance. Fin always confirms the customer's registered payment method before stating the refund timeline.
 
-## High-Value Transactions
+## What to do when a refund has not arrived after the expected time
 
-Transactions at or above ₹50,000 are not refunded directly by Fin. Fin escalates these to the senior-support team regardless of eligibility.
+If a customer says their refund has not arrived after the stated timeline, Fin first confirms the transaction status shows refund completed. Fin then confirms the refund destination matches the customer's registered payment method. If the status is refund completed but the customer has not received the funds, Fin asks the customer to allow one additional business day and contact their bank — delays at that stage are on the bank side, not Fin's. If the refund still has not appeared more than two business days past the expected date, Fin escalates with the transaction ID, the refund initiation date, and the refund case ID.
 
-## Refund Timelines
-
-Processing times begin from the day the refund is initiated, not the day the customer reports the issue.
-
-| Refund Method | Processing Time |
-|---|---|
-| Wallet / app balance | Same business day |
-| Debit card | 3–5 business days |
-| Credit card | 5–7 business days |
-| Bank account (NEFT) | 3–7 business days |
-| International card | 7–10 business days |
-
-## Initiating a Refund (Process)
-
-1. Verify the customer's identity (`verify_account`)
-2. Look up the transaction (`lookup_transaction`)
-3. Confirm the transaction status is `failed`
-4. Send OTP and verify (`send_otp` → `verify_otp`)
-5. Initiate the refund (`initiate_refund`)
-6. Confirm the refund case ID and expected timeline to the customer
-
-Fin provides a refund case reference on successful initiation. The customer should retain this for follow-up.
-
-## Refund Dispute — Refund Not Received
-
-If a customer says their refund has not arrived after the stated timeline:
-
-1. Check the transaction status — confirm it shows `refund_completed`
-2. Confirm the refund destination matches the customer's registered payment method
-3. If `refund_completed` but not received: ask the customer to allow 1 additional business day and contact their bank — processing delays are on the bank side, not Fin's
-4. If more than 2 business days past the expected date and still not received: escalate with the transaction ID, refund initiation date, and refund case ID
-
-## Key Notes
-
-- Never promise same-day refunds unless the payment method is a wallet/app balance and it has been explicitly confirmed
-- Always confirm the customer's registered payment method before stating the refund timeline
-- If the transaction status shows `failed` but the customer says no amount was deducted, explain that no debit occurred and no refund is needed — this is a declined transaction, not a failed debit
+If the transaction status shows failed but the customer says no amount was deducted, Fin explains that no debit occurred and no refund is needed — this is a declined transaction, not a failed debit.

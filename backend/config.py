@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     chroma_persist_dir: str = "./chroma_db"
     frontend_landing_url: str = "http://localhost:5173"
     frontend_agent_url: str = "http://localhost:5174"
-    frontend_supervisor_url: str = "http://localhost:5175"
+    frontend_admin_url: str = "http://localhost:5175"
     environment: str = "development"
     secret_key: str = "change-in-production"
 
@@ -47,7 +47,7 @@ class Settings(BaseSettings):
         origins = [
             self.frontend_landing_url,
             self.frontend_agent_url,
-            self.frontend_supervisor_url,
+            self.frontend_admin_url,
         ]
         if self.environment == "development":
             origins.append("*")

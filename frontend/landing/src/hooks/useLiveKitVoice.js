@@ -27,6 +27,7 @@ export function useLiveKitVoice({
   onSentiment,
   onKbHit,
   onOtpSent,
+  onOtpVerified,
 }) {
   const roomRef          = useRef(null)
   const escRoomRef       = useRef(null)
@@ -103,10 +104,11 @@ export function useLiveKitVoice({
           case 'escalation_cancelled': onEscalationCancelled?.(msg); break
           case 'human_agent_joined':
             onHumanAgentJoined?.(msg)
-            // Deepgram (Pipecat worker) handles customer STT and forwards to agent console.
+            // Deepgram (LiveKit Agents worker) handles customer STT and forwards to agent console.
             // No browser-side STT needed here — it would fight LiveKit for the mic.
             break
           case 'otp_sent':        onOtpSent?.(msg.otp); break
+          case 'otp_verified':    onOtpVerified?.(); break
           case 'call_ended':      onCallEnded?.(msg); break
           case 'sentiment':       onSentiment?.(msg.score); break
           case 'kb_hit':          onKbHit?.(msg); break
@@ -238,3 +240,4 @@ export function useLiveKitVoice({
   return { startCall, endCall, setMicEnabled, sendBrowserTranscript, getCallId, connectToEscalationRoom }
 
 }
+

@@ -315,16 +315,10 @@ async def escalate_to_human(
     if session.escalated:
         return {"success": True, "fast_response_key": "already_escalated"}
 
-    # Server-side identity gate: customer must be verified before escalation.
-    # This prevents the LLM from skipping identity collection.
-    if not session.customer_id:
-        logger.info(f"[{call_id}] escalate_to_human blocked — customer not verified")
-        return {
-            "success": False,
-            "fast_response_key": "verify_before_escalate",
-            "say_this": "I'd love to connect you with a specialist, but I need to verify your identity first for security. Could you share your phone number so I can look up your account? Once I've confirmed who you are, I'll transfer you straight away.",
-            "next_step": "Call verify_account with the phone number they provide. After verify_account succeeds, call escalate_to_human again immediately.",
-        }
+    # No identity gate here — the orchestrator already enforces two-step escalation
+    # confirmation before escalate_to_human is available to the LLM.
+    # Unverified customers (FAQ-only callers) escalate with a conversation-history
+    # bundle; the specialist can verify them directly.
 
     packet = build_escalation_packet(session, reason=reason)
     packet_dict = packet.to_dict() if packet else {}
@@ -863,6 +857,34 @@ async def initiate_refund(transaction_id: str, call_id: str) -> dict:
 
     if not txn_row:
         return {"success": False, "fast_response_key": "transaction_not_found"}
+
+    # Refunds-table idempotency — checked BEFORE transactions.status.
+    # transactions.status is derived state that can become stale or be manually
+    # reset; the refunds table is the authoritative record.  A row for this
+    # transaction means the goal is already achieved — never create a second one.
+    async with _db_module.AsyncSessionLocal() as db:
+        _er = await db.execute(
+            text("""
+                SELECT rfn_number, status
+                FROM refunds
+                WHERE transaction_id = :tid
+                ORDER BY initiated_at DESC
+                LIMIT 1
+            """),
+            {"tid": txn_row["id"]},
+        )
+        existing_refund = _er.mappings().first()
+
+    if existing_refund:
+        if existing_refund["status"] in ("completed", REFUND_COMPLETED):
+            return {"success": False, "fast_response_key": "refund_already_completed",
+                    "rfn_number": existing_refund["rfn_number"]}
+        return {
+            "success": False,
+            "fast_response_key": "refund_already_initiated",
+            "rfn_number": existing_refund["rfn_number"],
+            "estimated_days": "3–5 business days",
+        }
 
     status = txn_row["status"] or ""
 

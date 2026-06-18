@@ -15,7 +15,10 @@ tiktoken==0.8.0
 dateparser>=1.2.0
 python-multipart==0.0.28
 rank-bm25==0.2.2
-# LiveKit Agents voice pipeline (replaces Pipecat)
+# Embeddings — local inference for dev only; production uses HF Inference API (ENVIRONMENT=production)
+# sentence-transformers pulls torch (~800MB). In HF Spaces set ENVIRONMENT=production to skip local load.
+sentence-transformers==3.3.1
+# LiveKit Agents voice pipeline
 livekit-agents[deepgram,openai,silero,turn-detector,cartesia]~=1.5
 # Auth
 PyJWT==2.9.0

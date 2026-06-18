@@ -20,7 +20,7 @@ import os
 # LiveKit Agents auto-detects LiveKit Cloud URLs and tries to POST traces/metrics
 # to the OTLP endpoint. When the endpoint is rate-limiting or unreachable, the
 # BatchSpanProcessor worker thread blocks for up to 90s (30s × 3 providers),
-# which exceeds the LiveKit supervisor's ping/pong deadline and drops the call.
+# which exceeds the LiveKit admin's ping/pong deadline and drops the call.
 os.environ.setdefault("OTEL_SDK_DISABLED", "true")
 
 import logging

@@ -38,13 +38,33 @@ _doc_headings: dict[str, list[str]] = {}           # doc_id → [heading, ...]
 CALL_DISTANCE_THRESHOLD = 0.5
 
 # ── Entity patterns for Graph RAG lite ───────────────────────────────────────
+# Tuned for fintech support prose: lowercase, Indian context, no CamelCase or $ amounts.
 
 _ENTITY_PATTERNS = [
-    re.compile(r'\b[A-Z][a-z]+(?:[A-Z][a-z]+)+\b'),        # CamelCase: LiveKit, Pipecat
-    re.compile(r'\$[\d,]+(?:\.\d{2})?'),                    # $5.00, $100
-    re.compile(r'\b\d+\s*(?:days?|hours?|minutes?|weeks?)\b', re.I),  # 30 days
-    re.compile(r'(?:Section|Article|Clause)\s+[\d.]+', re.I),         # Section 5.2
-    re.compile(r'\b\d+(?:\.\d+)?%'),                        # 15%, 3.5%
+    # Uppercase acronyms: KYC, OTP, UPI, NEFT, IMPS, PIN, ATM, RFN, TXN
+    # Min 3 chars to avoid common 2-letter noise (IN, IT, AI, ID, IS, etc.)
+    re.compile(r'\b[A-Z]{3,6}\b'),
+    # Numeric time durations (digits + unit): "5 days", "24 hours", "2 business days"
+    re.compile(r'\b\d+\s*(?:business\s+|working\s+)?(?:days?|hours?|minutes?|weeks?)\b', re.I),
+    # Written-out time ranges: "three to five business days", "one to two business days"
+    re.compile(
+        r'\b(?:one|two|three|four|five|six|seven|eight|nine|ten)'
+        r'(?:\s+to\s+(?:one|two|three|four|five|six|seven|eight|nine|ten))?'
+        r'\s+(?:business\s+|working\s+)?(?:days?|hours?|weeks?)\b',
+        re.I,
+    ),
+    # Currency amounts: ₹50,000 or INR 50,000 or Rs. 5,000
+    re.compile(r'(?:₹|INR|Rs\.?)\s*[\d,]+(?:\.\d{2})?', re.I),
+    # Percentages
+    re.compile(r'\b\d+(?:\.\d+)?%'),
+    # Key fintech domain nouns (always distinguish chunks by topic)
+    re.compile(
+        r'\b(refund|dispute|chargeback|fraud|escalat(?:e|ion|ed)|'
+        r'kyc|otp|hold|lock(?:ed)?|block(?:ed)?|unauthorized|'
+        r'gateway|settlement|reversal|idempotent|compliance|'
+        r'debit|credit|merchant|processor)\b',
+        re.I,
+    ),
 ]
 
 
@@ -52,7 +72,9 @@ def _extract_entities(text: str) -> list[str]:
     entities = set()
     for pattern in _ENTITY_PATTERNS:
         for match in pattern.findall(text):
-            entities.add(match.lower().strip())
+            val = (match[0] if isinstance(match, tuple) else match).lower().strip()
+            if val and len(val) > 1:
+                entities.add(val)
     return list(entities)
 
 
@@ -327,7 +349,11 @@ async def _search_dense(query: str, n: int, collection=None) -> list[dict]:
     col = collection if collection is not None else _kb_collection
     if col is None:
         return []
-    embedding = await embed_single(query)
+    try:
+        embedding = await embed_single(query)
+    except Exception as exc:
+        logger.warning("Dense search skipped — embedding failed: %s", exc)
+        return []
     try:
         results = col.query(
             query_embeddings=[embedding],

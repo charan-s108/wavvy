@@ -66,9 +66,9 @@ async def submit_feedback(call_id: str, body: FeedbackBody):
         await db.commit()
 
     try:
-        from routers.ws_supervisor import broadcast_supervisor_event
+        from routers.ws_admin import broadcast_admin_event
         from datetime import datetime, timezone
-        await broadcast_supervisor_event({
+        await broadcast_admin_event({
             "type":         "feedback_submitted",
             "call_id":      call_id,
             "rating":       body.rating,
@@ -259,13 +259,35 @@ async def live_calls():
             ci = getattr(conv_ctx, "conversation_intent", None)
             if ci is not None:
                 intent = ci.value if hasattr(ci, "value") else str(ci)
+        # Orchestrator fields
+        orch_mode      = "general"
+        active_wf_name = None
+        active_node_name = None
+        try:
+            orch_state = session.orchestrator_state
+            orch_mode  = orch_state.mode.value
+            if orch_state.active_workflow_id:
+                from config_loader import get_active_workflows
+                for wf in get_active_workflows():
+                    if wf.id == orch_state.active_workflow_id:
+                        active_wf_name = wf.name
+                        node = wf.get_node(orch_state.active_node_id or "")
+                        if node:
+                            active_node_name = node.name
+                        break
+        except Exception:
+            pass
+
         result.append({
-            "call_id": call_id,
-            "customer_name": getattr(session, "confirmed_name", None),
-            "call_type": "escalated" if session.escalated else "voice_ai",
-            "started_at": session.started_at.isoformat() if hasattr(session, "started_at") else None,
-            "stage": session.conv_state.stage.value if hasattr(session, "conv_state") else "unknown",
-            "intent": intent,
+            "call_id":          call_id,
+            "customer_name":    getattr(session, "confirmed_name", None),
+            "call_type":        "escalated" if session.escalated else "voice_ai",
+            "started_at":       session.started_at.isoformat() if hasattr(session, "started_at") else None,
+            "stage":            session.conv_state.stage.value if hasattr(session, "conv_state") else "unknown",
+            "intent":           intent,
+            "orchestrator_mode": orch_mode,
+            "active_workflow":  active_wf_name,
+            "active_node":      active_node_name,
         })
     return result
 

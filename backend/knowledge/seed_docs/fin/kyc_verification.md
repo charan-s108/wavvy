@@ -1,96 +1,27 @@
 # KYC Verification — Customer Guidance
 
-## What is KYC?
+## What KYC is and why it is required for transactions
 
-KYC (Know Your Customer) is a mandatory identity verification process required by financial regulators. All accounts must complete KYC to unlock full transaction limits and services. Without completed KYC, accounts operate in a restricted state with lower transaction limits.
+KYC stands for Know Your Customer. It is a mandatory identity verification process required by financial regulators. All accounts must complete KYC to unlock full transaction limits and services. Without completed KYC, accounts operate in a restricted state with lower transaction limits. An account with KYC pending has not submitted documents yet and is limited to ten thousand rupees or two hundred US dollars per month with basic wallet features only. An account with KYC submitted has uploaded documents that are under review — limits remain the same as pending. An account with KYC verified has completed identity verification and has full transaction limits and all features. An account with KYC failed did not pass verification and must re-verify or escalate. An account with a KYC hold has documents under manual review and is restricted pending escalation to the KYC specialist team.
 
-## KYC Levels
+## Documents required for KYC identity verification
 
-| Level | Status | Transaction Limit | Features Available |
-|---|---|---|---|
-| KYC Pending | Not submitted | ₹10,000 / $200 per month | Basic wallet only |
-| KYC Submitted | Under review | Same as pending | Basic wallet only |
-| KYC Verified | Fully verified | Full limits | All features |
-| KYC Failed | Verification failed | Restricted | Re-verify or escalate |
-| KYC Hold | Manual review pending | Restricted | Escalation required |
+For identity proof, customers need one of the following: Aadhaar Card for India, PAN Card for India, a valid passport, a driver's license, or a national ID card. For address proof, customers need one of the following if their address differs from the identity document: a utility bill from the last three months, a bank statement from the last three months, or an Aadhaar Card if the current address matches. For premium accounts or high-limit transactions, customers additionally need a recent bank statement from the last six months and an employment letter or income proof.
 
-## Required Documents
+## Common reasons KYC verification fails and how to fix them
 
-**Identity Proof (one required):**
-- Aadhaar Card (India)
-- PAN Card (India)
-- Passport
-- Driver's License
-- National ID Card
+Document mismatch is the most common failure reason — the name on the submitted document does not match the name used during account registration. An expired document causes failure — the identity document has passed its validity date. Poor image quality causes failure — the photo is blurry, cropped, or has glare and all four corners of the document must be clearly visible. An incomplete document causes failure — not all pages were uploaded, for example passports require both the photo page and the address page. An address mismatch causes failure — the address on the proof document does not match the registered account address. A duplicate KYC causes failure — another account in the system already uses the same identity document.
 
-**Address Proof (one required, if different from identity proof):**
-- Utility bill (last 3 months)
-- Bank statement (last 3 months)
-- Aadhaar Card (if current address matches)
+If a customer's KYC has failed, Fin first informs them of the specific failure reason if available. Fin then guides the customer to re-upload documents through the app by going to Settings, then KYC, then Re-verify. Re-verification review takes twenty-four to forty-eight business hours. If re-verification fails a second time, Fin escalates to the KYC specialist team.
 
-**For premium accounts or high-limit transactions:**
-- Recent bank statement (last 6 months)
-- Employment letter or income proof
+## KYC hold versus compliance hold — how they are different and when to escalate
 
-## Common KYC Failure Reasons
+A KYC hold means the customer's documents are under manual review. The account is temporarily restricted while verification is pending. Fin escalates to the KYC specialist team. The typical review SLA is twenty-four to forty-eight business hours. The customer can accelerate by re-uploading clearer documents through the app.
 
-1. **Document mismatch** — Name on the document does not match the account registration name
-2. **Expired document** — ID document has passed its validity date
-3. **Poor image quality** — Photo is blurry, cropped, or has glare; all four corners must be visible
-4. **Incomplete document** — Not all pages uploaded (passports require both pages)
-5. **Address mismatch** — Address on proof does not match the registered address
-6. **Duplicate KYC** — Another account already uses the same document
+A compliance hold means a regulatory or Anti-Money Laundering review is in progress. This is a more serious hold triggered by transaction pattern analysis or regulatory flags. It cannot be resolved through self-service. Fin escalates to the compliance team. The customer is told: "There is a regulatory hold on your account. Our compliance team will review and contact you directly." Fin does not share what triggered the compliance hold. The typical response SLA is two to five business days.
 
-## Re-Verification Process
+Fin escalates to the KYC team when the customer status is KYC hold and they need urgent transaction access, when the customer has re-submitted documents twice without approval, when the customer believes the failure reason is incorrect, or when a business account requires enhanced due diligence. Fin escalates to the compliance team when the transaction status shows compliance hold, when the customer has received a compliance notification, or when a transaction was blocked due to regulatory concerns.
 
-If a customer's KYC has failed:
+## What Fin can and cannot do for KYC issues
 
-1. Inform the customer of the specific failure reason (if available in their account record)
-2. Guide them to re-upload documents via the app (Settings → KYC → Re-verify)
-3. Re-verification review takes 24–48 business hours
-4. If re-verification fails a second time, Fin escalates to the KYC specialist team
-
-## KYC Hold vs. Compliance Hold
-
-These two statuses are different and require different escalation paths:
-
-**KYC Hold (`kyc_hold`)**
-KYC documents are under manual review. The account is temporarily restricted pending document verification. Fin escalates to the **KYC specialist team**.
-- Typical SLA: 24–48 business hours for review
-- Customer can accelerate by re-uploading clearer documents via the app
-
-**Compliance Hold (`compliance_hold`)**
-A regulatory or AML (Anti-Money Laundering) review is in progress. This is a more serious hold triggered by transaction pattern analysis or regulatory flags. Fin escalates to the **compliance team**.
-- Cannot be resolved by the customer through self-service
-- Compliance team reviews all available account data
-- Customer should be told: "There is a regulatory hold on your account. Our compliance team will review and contact you directly."
-- Do not share details about what triggered the compliance hold
-- Typical SLA: 2–5 business days for initial response
-
-## What Fin Can and Cannot Do
-
-Fin can:
-- Explain KYC requirements and document types
-- Confirm the customer's current KYC status from their account record
-- Guide the customer through the app re-verification steps
-- Explain what a specific failure reason means in plain language
-
-Fin cannot:
-- Approve or override KYC verification
-- Access the document images submitted
-- Confirm the outcome of a pending review
-- Waive KYC requirements
-- Resolve a compliance hold (this always requires the compliance team)
-
-## Escalation for KYC Issues
-
-Always escalate to the kyc-team when:
-- Customer's status is `kyc_hold` and they need urgent transaction access
-- Customer has re-submitted documents twice without approval
-- Customer believes the failure reason is incorrect
-- Customer's business account requires enhanced due diligence (EDD)
-
-Always escalate to the compliance-team when:
-- Transaction status shows `compliance_hold`
-- Customer has received a compliance notification and wants to understand it
-- A transaction was blocked due to regulatory concerns
+Fin can explain KYC requirements and which documents are accepted. Fin can confirm the customer's current KYC status from their account record. Fin can guide the customer through the app re-verification steps. Fin can explain what a specific failure reason means in plain language. Fin cannot approve or override KYC verification decisions. Fin cannot access the document images the customer submitted. Fin cannot confirm the outcome of a pending review. Fin cannot waive KYC requirements. Fin cannot resolve a compliance hold — that always requires the compliance team.

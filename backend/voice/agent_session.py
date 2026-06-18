@@ -5,7 +5,7 @@ Pipeline:
   Deepgram nova-2 STT
   → Silero VAD + multilingual turn detector
   → OpenAI gpt-4o-mini LLM (OpenAI-compatible)
-  → Deepgram Aura-2 TTS aura-2-thalia-en (Cartesia quota exhausted — revert when credits reset)
+  → Deepgram Aura TTS aura-asteria-en (Aura v1 — free tier; Aura-2 requires paid plan)
 
 Workers run independently from FastAPI. Each call is isolated.
 Cleanup (DB persist, QA score trigger) runs via HTTP callback to FastAPI.
@@ -17,6 +17,7 @@ import json
 import logging
 import re
 
+import livekit.api as lk_api
 import livekit.rtc as rtc
 from livekit.agents import AgentSession, JobContext, JobProcess, function_tool
 from livekit.agents.stt import SpeechEventType
@@ -28,13 +29,36 @@ from livekit.plugins import openai as lk_openai
 # The ML inference server was timing out and causing AssertionError cascades that
 # triggered preemptive generation on partial utterances.
 
+import httpx
+
 from config import settings
-from config_loader import get_config, load_active_config
 from session.call_session import TurnState, create_session, get_session, remove_session
 from voice.agent_tools import make_agent_tools, _notify_fastapi
 from voice.barge_in_manager import SilenceTimer
 
 logger = logging.getLogger(__name__)
+
+_DEFAULT_AGENT_NAME   = "Fin"
+_DEFAULT_SYSTEM_PROMPT = "You are Fin, a helpful financial support assistant."
+
+
+async def _fetch_agent_config() -> tuple[str, str]:
+    """Return (voice_system_prompt, agent_name) from the backend.
+
+    Falls back to defaults if the backend is unreachable so the worker
+    can still start a call — the full prompt is not strictly required for
+    basic functionality.
+    """
+    try:
+        url = f"{settings.backend_internal_url}/api/tenant/config/full"
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get(url)
+            resp.raise_for_status()
+            data = resp.json()
+        return data.get("voice_system_prompt", _DEFAULT_SYSTEM_PROMPT), data.get("agent_name", _DEFAULT_AGENT_NAME)
+    except Exception as exc:
+        logger.warning("Could not fetch agent config from backend (%s); using defaults", exc)
+        return _DEFAULT_SYSTEM_PROMPT, _DEFAULT_AGENT_NAME
 
 
 async def _strip_function_tags(text):
@@ -84,10 +108,10 @@ async def _strip_function_tags(text):
 
 
 def _make_tts():
-    # Deepgram Aura-2: ~200ms TTFB, reliable.
-    # Cartesia quota exhausted (402) — switch back once credits reset.
+    # Deepgram Aura (v1) aura-asteria-en — available on all tiers including free.
+    # aura-2-thalia-en requires a paid Deepgram plan and fails silently on free tier.
     return deepgram.TTS(
-        model="aura-2-thalia-en",
+        model="aura-asteria-en",
         api_key=settings.deepgram_api_key,
     )
 
@@ -96,15 +120,30 @@ def prewarm(proc: JobProcess) -> None:
     """Pre-load Silero VAD and initialize shared clients once per worker subprocess."""
     import asyncio as _asyncio
 
-    # Reinitialize DB engine in this subprocess's event loop.
-    # The module-level engine in database.py was created in the parent loop;
-    # asyncpg connections are loop-bound and will fail without this.
-    from database import reinit_engine
-    reinit_engine()
+    # Worker subprocesses are forked from the parent FastAPI process.  The
+    # module-level DB engine may carry parent-process connections bound to the
+    # parent's event loop.  Recreate it so connections are made in the child's
+    # event loop (asyncpg is event-loop-bound).
+    try:
+        from database import reinit_engine
+        reinit_engine()
+    except Exception as exc:
+        logger.warning("prewarm: reinit_engine failed: %s", exc)
 
-    _asyncio.get_event_loop().run_until_complete(load_active_config())
+    # Load tenant config (tool list, prompts) from DB — fast, not embedding model.
+    # Result is cached in config_loader._config; make_agent_tools() reads it sync.
+    try:
+        from config_loader import load_active_config
+        _asyncio.run(load_active_config())
+        logger.info("prewarm: tenant config loaded")
+    except Exception as exc:
+        logger.warning("prewarm: could not load tenant config (%s); tools will fall back", exc)
 
-    proc.userdata["vad"] = silero.VAD.load()
+    proc.userdata["vad"] = silero.VAD.load(
+        sample_rate=8000,          # half the samples → ~2× faster inference, fixes "slower than realtime"
+        min_silence_duration=0.3,  # was 0.55 — tighter gate reduces end-of-speech lag
+        prefix_padding_duration=0.3,  # was 0.5
+    )
 
     proc.userdata["tts"] = _make_tts()
 
@@ -157,12 +196,47 @@ async def entrypoint(ctx: JobContext) -> None:
         except Exception as exc:
             logger.debug("[%s] publish_event failed: %s", call_id, exc)
 
+    # ── Reinit DB engine in current event loop ──────────────────────────
+    # prewarm ran asyncio.run() which closes its event loop.  asyncpg
+    # connections are loop-bound; any query using the prewarm pool fails with
+    # "Future attached to a different loop".  Reiniting the engine here
+    # is cheap (just creates a new SQLAlchemy engine object) and ensures all
+    # subsequent DB calls — config reload, workflow reload, tools — use fresh
+    # connections bound to this job's event loop.
+    try:
+        from database import reinit_engine
+        reinit_engine()
+    except Exception as exc:
+        logger.warning("[%s] reinit_engine at entrypoint failed: %s", call_id, exc)
+
+    # ── Ensure tenant config is loaded ──────────────────────────────────
+    # After reinit the config is still in _config (in-memory); a load is
+    # only needed if prewarm failed and the config was never fetched.
+    try:
+        from config_loader import get_config, load_active_config
+        try:
+            get_config()  # raises RuntimeError if not loaded
+        except Exception:
+            await load_active_config()
+            logger.info("[%s] Tenant config loaded in entrypoint event loop", call_id)
+    except Exception as exc:
+        logger.warning("[%s] Could not load tenant config in entrypoint: %s", call_id, exc)
+
+    # ── Reload workflow definitions ──────────────────────────────────────
+    # Guarantees that seed.py / PUT /api/workflows changes take effect on
+    # the next call without restarting the worker process.
+    try:
+        from config_loader import reload_workflows
+        wfs = await reload_workflows()
+        logger.info("[%s] Workflow definitions reloaded at call start (%d)", call_id, len(wfs))
+    except Exception as exc:
+        logger.warning("[%s] Could not reload workflows at call start: %s", call_id, exc)
+
     # ── Agent tools (closures bound to this call) ────────────────────────
     tools = make_agent_tools(call_id, session, publish_event)
 
-    # ── Agent instructions (loaded from active tenant config) ───────────
-    cfg = get_config()
-    instructions = cfg.voice_system_prompt
+    # ── Agent instructions (fetched from backend at call start) ────────
+    instructions, _agent_name_cfg = await _fetch_agent_config()
     if session.initial_topic:
         instructions += (
             f"\n\nOPENING TOPIC: The visitor selected '{session.initial_topic}'. "
@@ -171,6 +245,7 @@ async def entrypoint(ctx: JobContext) -> None:
 
     agent = WavvyAgent(
         session=session,
+        publish_event=publish_event,
         instructions=instructions,
         tools=tools,
     )
@@ -191,7 +266,7 @@ async def entrypoint(ctx: JobContext) -> None:
             model="nova-2",
             language="en-US",
             api_key=settings.deepgram_api_key,
-            endpointing_ms=400,
+            endpointing_ms=250,    # was 400 — reduces end-of-utterance detection lag
             smart_format=True,
         ),
         llm=lk_openai.LLM(**_llm_kwargs),
@@ -263,17 +338,13 @@ async def entrypoint(ctx: JobContext) -> None:
             return
 
         if role == "assistant":
-            # Human agent has taken over
-            if session.human_joined:
-                # human_agent_say_active: set by agent_say_text data handler so typed
-                # TTS is not interrupted before it plays.
+            # Post-escalation: human agent has taken over or escalation is in progress.
+            # Allow TTS to play when human_agent_say_active is set (agent typed a message);
+            # interrupt any AI-generated speech otherwise.
+            if session.human_joined or session.escalated:
                 if not session.human_agent_say_active:
                     agent_session.interrupt()
                 return  # skip normal assistant handling regardless
-            # Escalation announced — AI waits silently for human to join
-            if session.escalated:
-                agent_session.interrupt()
-                return
             session.turn_state = TurnState.ASSISTANT_SPEAKING
             # Restart silence timer — fires if user goes quiet after agent speaks
             silence_timer.start()
@@ -301,7 +372,7 @@ async def entrypoint(ctx: JobContext) -> None:
             session.conversation_history.append({"role": "user", "content": text})
             session.turn_count += 1
 
-    # ── Event: per-turn latency metrics → push to supervisor ────────────
+    # ── Event: per-turn latency metrics → push to admin ────────────
     @agent_session.on("metrics_collected")
     def on_metrics(ev) -> None:
         m = ev.metrics
@@ -329,16 +400,38 @@ async def entrypoint(ctx: JobContext) -> None:
     # ── Handle keypad / quick-option input from browser ──────────────────
     @ctx.room.on("data_received")
     def on_data(data_packet) -> None:
-        # Human agent has taken over — ignore browser keypad/text input
-        if session.human_joined:
-            return
         try:
             payload = json.loads(
                 data_packet.data.decode() if isinstance(data_packet.data, bytes)
                 else data_packet.data
             )
+
+            # agent_say_text: human agent typed a message → play as TTS to customer.
+            # Processed FIRST — before the human_joined guard — because this message
+            # comes from FastAPI (not the customer's browser) and must always reach
+            # the TTS layer.  Gated on session.escalated so it only fires after
+            # handoff; gated on session.human_agent_say_active to suppress the
+            # interrupt() path in on_item_added while the utterance plays.
+            if payload.get("type") == "agent_say_text":
+                text = payload.get("text", "").strip()
+                if text and session.escalated:
+                    session.human_agent_say_active = True
+                    agent_session.say(text, allow_interruptions=True)
+                    # Reset after 30s — on_item_added fires asynchronously and can arrive
+                    # well after the say() call.  0.3s was too short: on_item_added would
+                    # see human_agent_say_active=False, call interrupt(), and kill the TTS.
+                    asyncio.get_event_loop().call_later(
+                        30.0, lambda: setattr(session, "human_agent_say_active", False)
+                    )
+                return
+
+            # All remaining message types come from the customer's browser.
+            # Once a human agent has taken over, ignore them — the human is
+            # responding directly and the AI must not re-activate.
+            if session.human_joined:
+                return
+
             # FastAPI sends this when the human agent clicks "ANSWER CALL"
-            # (agent-join endpoint sends a data message to this room)
             if payload.get("type") == "human_agent_accepted":
                 session.human_joined = True
                 silence_timer.reset()
@@ -347,17 +440,6 @@ async def entrypoint(ctx: JobContext) -> None:
                     "call_id": call_id,
                 }))
                 human_took_over.set()
-                return
-            if payload.get("type") == "agent_say_text":
-                # Human agent typed a message → play it as TTS to the customer.
-                text = payload.get("text", "").strip()
-                if text and session.human_joined:
-                    session.human_agent_say_active = True
-                    agent_session.say(text, allow_interruptions=True)
-                    # Reset flag after a short delay so future interrupts work normally.
-                    asyncio.get_event_loop().call_later(
-                        0.3, lambda: setattr(session, "human_agent_say_active", False)
-                    )
                 return
 
             if payload.get("type") == "keypad_input" and payload.get("is_final"):
@@ -409,11 +491,7 @@ async def entrypoint(ctx: JobContext) -> None:
 
     # ── Greeting via say() — skips LLM entirely, goes straight to TTS ────
     # deterministic so we use say() which goes straight to Cartesia (~200ms).
-    try:
-        _cfg = get_config()
-        _agent_name = _cfg.agent_name or "Fin"
-    except Exception:
-        _agent_name = "Fin"
+    _agent_name = _agent_name_cfg or _DEFAULT_AGENT_NAME
 
     if session.initial_topic:
         greeting = (
@@ -467,6 +545,29 @@ async def entrypoint(ctx: JobContext) -> None:
         if not is_esc_room:
             await _notify_fastapi(call_id, "call_ended", {})
             asyncio.create_task(publish_event({"type": "call_ended", "call_id": call_id}))
+
+        # Delete the LiveKit room 2s after notifying all parties.
+        # This prevents zombie worker reconnect loops (401 Unauthorized) that occur
+        # when the empty_timeout (10 min) lets a stale room linger after a call ends.
+        # The 2s gap gives the agent console time to handle call_closed before the
+        # WebRTC room is gone.
+        _room_to_delete = room_name
+
+        async def _delete_room_later() -> None:
+            await asyncio.sleep(2.0)
+            try:
+                _lk = lk_api.LiveKitAPI(
+                    settings.livekit_url,
+                    settings.livekit_api_key,
+                    settings.livekit_api_secret,
+                )
+                await _lk.room.delete_room(lk_api.DeleteRoomRequest(room=_room_to_delete))
+                await _lk.aclose()
+                logger.info("[%s] Room %s deleted", call_id, _room_to_delete)
+            except Exception as _exc:
+                logger.debug("[%s] Room deletion: %s", call_id, _exc)
+
+        asyncio.create_task(_delete_room_later())
 
     except Exception as exc:
         logger.error("[%s] Cleanup failed: %s", call_id, exc, exc_info=True)

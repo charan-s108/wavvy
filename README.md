@@ -1,8 +1,10 @@
 # Wavvy — Sense Intent. Drive Resolution.
 
-Wavvy is a real-time voice AI CCaaS platform — LiveKit WebRTC · STT · LLM · TTS · RAG. It ships with **Fin**, a fintech voice agent demo that showcases the full platform: OTP-gated tool execution, hybrid knowledge retrieval, Companion AI, and human-in-the-loop escalation.
+> **Live demo:** [wavvy.vercel.app](https://wavvy.vercel.app) · Agent Desktop: [wavvy-agent.vercel.app](https://wavvy-agent.vercel.app) · Admin: [wavvy-admin.vercel.app](https://wavvy-admin.vercel.app)
 
-Wavvy is the infrastructure. Fin is the demo. Swap the system prompt, tools, and KB — you have a new product.
+Wavvy is a real-time voice AI CCaaS platform — LiveKit WebRTC · Deepgram STT · OpenAI LLM · Deepgram TTS · RAG. It ships with **Fin**, a fintech voice agent demo that showcases the full platform: OTP-gated tool execution, hybrid knowledge retrieval, Companion AI for human agents, and human-in-the-loop escalation.
+
+Wavvy is the infrastructure. Fin is the demo. Swap the system prompt, tools, and KB — you have a new product for any domain.
 
 ---
 
@@ -14,7 +16,7 @@ Wavvy is the infrastructure. Fin is the demo. Swap the system prompt, tools, and
 │                                                                              │
 │  App 1  Landing + Voice     :5173   Customer entry — speak to Fin            │
 │  App 2  Agent Desktop       :5174   Human agents receive escalated calls     │
-│  App 3  Supervisor          :5175   QA scores, coaching packs, KB upload     │
+│  App 3  Admin          :5175   QA scores, coaching packs, KB upload     │
 │  Backend FastAPI + asyncio  :8000   Shared by all three frontends            │
 │                                                                              │
 │  LIVE CALL FLOW                                                              │
@@ -27,7 +29,7 @@ Wavvy is the infrastructure. Fin is the demo. Swap the system prompt, tools, and
 │  Human agent joins LiveKit room  →  AI goes silent  →  agent handles call   │
 │                                                                              │
 │  Post-call (background task):                                                │
-│  QA agent scores transcript  →  Supervisor dashboard updates                │
+│  QA agent scores transcript  →  Admin dashboard updates                │
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -165,7 +167,7 @@ Every call is auto-scored on 6 rubric dimensions within 5 seconds of ending:
 - **Handle time** — efficient, no excessive repetition?
 - **Disclosure** — did Fin identify itself as AI?
 
-Scores appear in the Supervisor dashboard. Coaching packs are generated from real scored calls (minimum 3 calls per agent).
+Scores appear in the Admin dashboard. Coaching packs are generated from real scored calls (minimum 3 calls per agent).
 
 ---
 
@@ -222,7 +224,7 @@ python seed.py            # seed 10 demo customers + 2 agents
 uvicorn main:app --port 8000 --reload
 
 # LiveKit Agents worker (separate terminal)
-python -m livekit.agents.worker --host 0.0.0.0 voice.agent_session
+python -m voice.agent_worker dev     # local dev (auto-reloads)
 ```
 
 ### 3. Frontend — three terminals
@@ -230,7 +232,7 @@ python -m livekit.agents.worker --host 0.0.0.0 voice.agent_session
 ```bash
 cd frontend/landing    && npm install && npm run dev   # :5173
 cd frontend/agent      && npm install && npm run dev   # :5174
-cd frontend/supervisor && npm install && npm run dev   # :5175
+cd frontend/admin && npm install && npm run dev   # :5175
 ```
 
 ### 4. Agent console login
@@ -266,7 +268,7 @@ CHROMA_PERSIST_DIR=./chroma_db
 # CORS
 FRONTEND_LANDING_URL=http://localhost:5173
 FRONTEND_AGENT_URL=http://localhost:5174
-FRONTEND_SUPERVISOR_URL=http://localhost:5175
+FRONTEND_ADMIN_URL=http://localhost:5175
 
 ENVIRONMENT=development
 SECRET_KEY=change-in-production
@@ -346,7 +348,7 @@ POST  /api/orchestration/action        Human agent executes an action (approve r
 
 # WebSockets
 WS    /ws/agent                        Agent desktop real-time events
-WS    /ws/supervisor                   Supervisor dashboard real-time events
+WS    /ws/admin                   Admin dashboard real-time events
 ```
 
 ---
@@ -405,8 +407,16 @@ wavvy/
 └── frontend/
     ├── landing/                    App 1 — React + Vite (:5173)
     ├── agent/                      App 2 — React + Vite (:5174)
-    └── supervisor/                 App 3 — React + Vite (:5175)
+    └── admin/                     App 3 — React + Vite (:5175)
 ```
+
+---
+
+## Agent Desktop — Simulation Mode
+
+The Agent Desktop ships with a built-in simulation mode for offline demos. Press **Space** or **Enter** to advance through 11 pre-scripted steps (incoming call → investigation → OTP → refund/unlock → ACW). No backend or LiveKit connection required.
+
+Enable/disable: `frontend/agent/src/simulation.js` + the three `// SIM` blocks in `App.jsx`.
 
 ---
 
@@ -417,7 +427,7 @@ Issues and PRs are welcome. When contributing:
 - Backend: all handlers must be `async def`. No sync DB calls.
 - Tools: every new tool must be registered in `guardrails/tool_permissions.py` with stage requirements.
 - Frontend: keep all three apps as separate Vite projects — no shared bundling.
-- Tests: `pytest backend/tests/` before opening a PR.
+- Tests: `cd backend && .venv/bin/pytest tests/test_wavvy.py -v` before opening a PR.
 
 ---
 

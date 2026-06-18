@@ -308,6 +308,8 @@ def make_agent_tools(call_id: str, session, publish_event) -> list:
                 name = result.get("first_name", "there")
                 acct = result.get("account_type", "standard")
                 session.confirmed_name = name
+                # Build digit-by-digit speech for number readback (e.g. "9 8 1 2 3 4 5 6 0 1")
+                digit_speech = " ".join(digits_only) if digits_only else ""
                 profile = getattr(session, "customer_profile", {}) or {}
 
                 # Build a grounded context summary from the eagerly-loaded data
@@ -371,10 +373,16 @@ def make_agent_tools(call_id: str, session, publish_event) -> list:
                         "[%s] verify_account: VERIFICATION transition=%s stage=%s",
                         call_id, ok, _s.conv_state.stage.value,
                     )
+                number_readback = (
+                    f"Registered number: {digit_speech}. "
+                    f"Read this number back to the customer one digit at a time to confirm. "
+                    if digit_speech else ""
+                )
                 return (
                     f"Verified: {name} ({acct}).{status_note} "
+                    f"{number_readback}"
                     f"{context_line}. "
-                    f"Ask what you can help with — do not search transactions yet."
+                    f"After reading the number, immediately call send_otp — do not wait for the customer to ask."
                 )
             effective_key = "not_found_max" if result.get("attempts", 0) >= 2 else "not_found_1"
             return runner.advance("verify_account", effective_key).message
@@ -584,6 +592,7 @@ def make_agent_tools(call_id: str, session, publish_event) -> list:
                 "status": "done", "result": {"success": result.get("success")},
             }))
             if result.get("success"):
+                session.orchestrator_state.completed_terminal_tools.add("unlock_account")
                 return "Account unlocked successfully. The customer should now be able to log in."
             if result.get("fast_response_key") == "verification_required":
                 return "Cannot unlock — OTP verification required first. Please call send_otp and verify_otp."
@@ -603,6 +612,7 @@ def make_agent_tools(call_id: str, session, publish_event) -> list:
                 "status": "done", "result": {"success": result.get("success")},
             }))
             if result.get("success"):
+                session.orchestrator_state.completed_terminal_tools.add("initiate_refund")
                 rfn = result.get("rfn_number", "")
                 rfn_part = f" Your reference number is {rfn}." if rfn else ""
                 return f"Refund initiated for {transaction_id}.{rfn_part} Funds will appear within 3 to 5 business days."
@@ -611,8 +621,15 @@ def make_agent_tools(call_id: str, session, publish_event) -> list:
                 return "Cannot initiate refund — OTP verification required first."
             if key == "transaction_not_found":
                 return f"Transaction {transaction_id} not found on this account. Please confirm the ID."
-            if key in ("refund_already_initiated", "refund_already_completed",
-                       "refund_ineligible", "fraud_review_required",
+            if key in ("refund_already_initiated", "refund_already_completed"):
+                # Refund already exists — goal is achieved; block any pivot back to this workflow
+                session.orchestrator_state.completed_terminal_tools.add("initiate_refund")
+                existing_rfn = result.get("rfn_number", "")
+                base_msg = runner.advance("initiate_refund", key).message
+                if existing_rfn:
+                    return base_msg + f" The existing reference number is {existing_rfn}."
+                return base_msg
+            if key in ("refund_ineligible", "fraud_review_required",
                        "kyc_escalation_required", "session_duplicate"):
                 return runner.advance("initiate_refund", key).message
             return "Unable to initiate refund right now. Let me connect you with a specialist."
@@ -635,6 +652,7 @@ def make_agent_tools(call_id: str, session, publish_event) -> list:
                 "status": "done", "result": {"success": result.get("success")},
             }))
             if result.get("success"):
+                session.orchestrator_state.completed_terminal_tools.add("raise_dispute")
                 ref = result.get("dsp_number", "")
                 ref_part = f" Your reference number is {ref}." if ref else ""
                 return f"Dispute filed for {normalized_txn}.{ref_part} Our disputes team will review within 5–7 business days."
@@ -667,6 +685,7 @@ def make_agent_tools(call_id: str, session, publish_event) -> list:
                 "status": "done", "result": {"success": result.get("success")},
             }))
             if result.get("success"):
+                session.orchestrator_state.completed_terminal_tools.add("report_fraud")
                 ref = result.get("fraud_number", "")
                 ref_part = f" Your reference number is {ref}." if ref else ""
                 return f"Fraud report filed for {normalized_txn}.{ref_part} Our fraud team will review within 24 hours."
@@ -839,6 +858,21 @@ def make_agent_tools(call_id: str, session, publish_event) -> list:
             role = "Customer" if m.get("role") == "user" else "Agent"
             parts.append(f"{role}: {m.get('content', '')[:120]}")
         summary = " | ".join(parts) or "support inquiry"
+
+        # Deterministic escalation reason: use active workflow name so the
+        # agent desktop always shows the real issue type (e.g. "Fraud Report")
+        # instead of whatever generic string the LLM provides.
+        try:
+            _orch = getattr(session, "orchestrator_state", None)
+            _wf_id = getattr(_orch, "active_workflow_id", None) if _orch else None
+            if _wf_id:
+                from config_loader import get_active_workflows
+                for _wf in get_active_workflows():
+                    if str(_wf.id) == str(_wf_id):
+                        reason = _wf.name
+                        break
+        except Exception:
+            pass
 
         result = await execute_with_recovery(
             tool_name="escalate_to_human",

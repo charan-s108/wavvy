@@ -82,9 +82,7 @@ export default function CallModal({ open, onClose }) {
   }, [humanConnected])
   const onHumanAgentJoined    = useCallback(() => {
     setHumanConnected(true)
-    // Auto-transition back to CallScreen after a brief delay so customer can
-    // see "Specialist connected" and use mic/keypad controls again.
-    setTimeout(() => setPhase(PHASE.CALLING), 1500)
+    setPhase(PHASE.CALLING)
   }, [])
   const onCallEnded           = useCallback(() => setPhase(PHASE.FEEDBACK), [])
   const onAgentToken     = useCallback((tok) => setAgentBuffer(p => p + tok), [])
@@ -98,11 +96,14 @@ export default function CallModal({ open, onClose }) {
     setOtpCode(otp)
     addLine('system', `Demo OTP: ${otp}`)
   }, [addLine])
+  const onOtpVerified    = useCallback(() => {
+    setOtpCode(null)
+  }, [])
 
   const { startCall, endCall, setMicEnabled, sendBrowserTranscript, getCallId, connectToEscalationRoom } = useLiveKitVoice({
     onCallReady, onTranscript, onAgentToken, onAgentDone,
     onEscalation, onEscalationCancelled, onHumanAgentJoined, onCallEnded,
-    onToolCall, onGuardrailBlock, onSentiment, onKbHit, onOtpSent,
+    onToolCall, onGuardrailBlock, onSentiment, onKbHit, onOtpSent, onOtpVerified,
   })
 
   const revertToAI = useCallback(async () => {
@@ -145,10 +146,12 @@ export default function CallModal({ open, onClose }) {
     setPhase(PHASE.FEEDBACK)
   }, [endCall])
 
+  const isCallActive = phase === PHASE.CONNECTING || phase === PHASE.CALLING || phase === PHASE.TRANSFER
+
   const handleClose = useCallback(() => {
-    if (phase === PHASE.CONNECTING || phase === PHASE.CALLING || phase === PHASE.TRANSFER) endCall()
+    if (isCallActive) endCall()
     onClose()
-  }, [phase, endCall, onClose])
+  }, [isCallActive, endCall, onClose])
 
   useEffect(() => {
     if (!open) return
@@ -171,22 +174,6 @@ export default function CallModal({ open, onClose }) {
     <AnimatePresence>
       {open && (
         <>
-        {/* ── OTP toast — fixed position, on top of everything ── */}
-        {otpCode && (
-          <div style={{
-            position: 'fixed', top: 16, left: '50%', transform: 'translateX(-50%)',
-            zIndex: 9999,
-            background: '#f4f73d', color: '#000',
-            borderRadius: 12, padding: '12px 20px',
-            display: 'flex', alignItems: 'center', gap: 14,
-            boxShadow: '0 8px 40px rgba(0,0,0,0.7)',
-            minWidth: 240,
-          }}>
-            <span style={{ fontSize: '11px', fontWeight: 700, letterSpacing: '1.5px', textTransform: 'uppercase', opacity: 0.6 }}>Demo OTP</span>
-            <span style={{ fontFamily: 'monospace', fontSize: '28px', fontWeight: 800, letterSpacing: '0.3em' }}>{otpCode}</span>
-            <button onClick={() => setOtpCode(null)} style={{ marginLeft: 'auto', background: 'none', border: 'none', cursor: 'pointer', fontSize: 20, lineHeight: 1, opacity: 0.5 }}>×</button>
-          </div>
-        )}
         {/* ── Backdrop ─────────────────────────────────────────── */}
         <motion.div
           initial={{ opacity: 0 }}
@@ -195,7 +182,7 @@ export default function CallModal({ open, onClose }) {
           transition={{ duration: 0.22 }}
           className="fixed inset-0 z-50 flex items-center justify-center px-4"
           style={{ background: 'rgba(0,0,0,0.82)', backdropFilter: 'blur(20px)' }}
-          onClick={e => { if (e.target === e.currentTarget) handleClose() }}
+          onClick={e => { if (e.target === e.currentTarget && !isCallActive) handleClose() }}
         >
           {/* ── Modal card ──────────────────────────────────────── */}
           <motion.div

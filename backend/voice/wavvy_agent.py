@@ -1,19 +1,25 @@
 """
-WavvyAgent — LiveKit Agent subclass that applies 5 context-window optimizations
-on every LLM call without touching the tool execution path.
+WavvyAgent — LiveKit Agent subclass.
 
-Optimizations applied in llm_node() before every OpenAI call:
-  1. Stage-gated tools    — only send definitions allowed at current ConversationStage
+Applies the orchestrator + 5 context-window optimizations on every LLM call.
+
+Execution order in llm_node():
+  0. Orchestrator.process_utterance() — entity extraction, FAQ, mode dispatch,
+     workflow node advance.  Returns OrchestratorDecision{tools, directive, context_additions}.
+  1. Tool scoping  — decision.tools_for_llm (replaces stage-gated filter)
   2. History compression  — keep last MAX_CONVO_ITEMS user+assistant turns + summary
   3. Stage-aware customer — inject customer profile only at TOOL_EXECUTION / RESOLUTION
   4. RAG on-demand        — KB prefetched while user speaks, injected when relevant
   5. Semantic KB dedup    — skip re-injection when fingerprint matches last turn
+  +  Orchestrator context — directive + FAQ answer injected from OrchestratorDecision
+
+The legacy _filter_tools_by_stage() is kept as a fallback (orchestrator error path).
 """
 from __future__ import annotations
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING
+from typing import Callable, Optional, TYPE_CHECKING
 
 from livekit.agents import Agent
 from livekit.agents.llm import ChatContext, ChatMessage
@@ -28,10 +34,6 @@ logger = logging.getLogger(__name__)
 MAX_CONVO_ITEMS = 20   # max user+assistant ChatMessages kept per LLM call (~10 exchanges)
 KB_MIN_RELEVANCE = 0.015   # RRF scores range ~0.016–0.033 for real hits; filter below this
 KB_MAX_CHARS = 1_000       # truncate KB snippet before injection
-# escalate_to_human is always available so customers can reach a human from any stage.
-# cancel_escalation is NOT always-on — it's only meaningful after escalation fires.
-# Keeping it in ALWAYS_ON caused spurious calls during greeting when EOU prediction
-# failed and the LLM fired on a single "Hi." with no context.
 ALWAYS_ON_TOOLS = {"escalate_to_human"}
 
 
@@ -39,12 +41,72 @@ class WavvyAgent(Agent):
     """
     Drop-in replacement for Agent. Overrides two hooks:
       on_user_turn_completed — async KB prefetch before LLM fires
-      llm_node              — injects optimized context and filtered tools
+      llm_node              — orchestrator dispatch + optimized context + filtered tools
     """
 
-    def __init__(self, session: CallSession, **kwargs):
+    def __init__(
+        self,
+        session: "CallSession",
+        publish_event: Optional[Callable] = None,
+        **kwargs,
+    ):
         super().__init__(**kwargs)
         self._session = session
+        self._publish_event = publish_event or _noop_publish
+
+    # ── LLM-action node advancement — capture tool results for WORKFLOW nodes ─
+
+    async def on_enter(self) -> None:
+        """Subscribe to tool-execution events to advance LLM-action workflow nodes."""
+        try:
+            self.session.on("function_tools_executed", self._on_tools_executed)
+        except Exception:
+            pass  # event API may differ across SDK versions
+
+    def _on_tools_executed(self, event) -> None:
+        """Record the last tool's fast_response_key on orchestrator state.
+
+        Called by the LiveKit SDK after every batch of LLM tool calls finishes.
+        Only relevant when mode == WORKFLOW and the current node has no auto_actions
+        (LLM-driven action nodes).  The stored key is consumed by the NEXT
+        advance() call to evaluate the edge and advance to the next node.
+        """
+        from session.orchestrator_state import ExecutionMode
+        state = self._session.orchestrator_state
+        if state.mode != ExecutionMode.WORKFLOW:
+            return
+
+        import json, re as _re
+        for call, output in event.zipped():
+            if output is None or output.is_error:
+                continue
+            raw = output.output or ""
+
+            # Try JSON first (lookup_transaction, initiate_refund, etc.)
+            try:
+                result = json.loads(raw)
+            except (ValueError, TypeError):
+                result = {}
+
+            # Capture transaction_id from JSON tool results (e.g. lookup_transaction)
+            txn_from_result = result.get("transaction_id")
+            if txn_from_result and not state.entity_slots.txn_id:
+                state.entity_slots.txn_id = str(txn_from_result).upper()
+
+            # Capture TXN-XXXX from string tool results (search_transactions returns plain text)
+            if not state.entity_slots.txn_id:
+                m = _re.search(r'\bTXN-\d+\b', raw, _re.IGNORECASE)
+                if m:
+                    state.entity_slots.txn_id = m.group(0).upper()
+
+            fast_key = result.get("fast_response_key")
+            if fast_key:
+                state.pending_tool_result = (call.name, fast_key)
+                logger.debug(
+                    "[%s] tool_result captured for workflow advance: tool=%s key=%s",
+                    self._session.call_id, call.name, fast_key,
+                )
+                break  # first tool result wins; batch tool calls are rare
 
     # ── 4. KB prefetch — runs while user finishes speaking ────────────────────
 
@@ -105,17 +167,109 @@ class WavvyAgent(Agent):
             except (asyncio.TimeoutError, Exception):
                 pass
 
-        # 1. Stage-gated tools
-        filtered_tools = _filter_tools_by_stage(tools, session)
+        # ── 0. Orchestrator dispatch ──────────────────────────────────────────
+        last_text = _get_last_user_text(chat_ctx)
+        decision  = None
+        if last_text:
+            try:
+                from voice.orchestrator import process_utterance as orchestrate
+                decision = await orchestrate(last_text, session, tools, self._publish_event)
+            except Exception as exc:
+                logger.warning("[%s] orchestrator error: %s; falling back", session.call_id, exc)
 
-        # 2+3+4+5. Build optimized context copy
-        modified_ctx = _build_optimized_context(chat_ctx, session)
+        # ── Deterministic bypass — LLM skipped entirely ──────────────────────
+        # For name-collection, confirmation prompts, and escalation the orchestrator
+        # returns bypass_llm_text.  Yield it verbatim and return; no LLM call made.
+        # This prevents drift when STT produces confusing tokens (e.g. "woman" for
+        # "human") and ensures the escalation tool always fires at the right moment.
+        if decision is not None:
+            bypass_text = getattr(decision, 'bypass_llm_text', None)
+            if bypass_text:
+                yield bypass_text
+                return
+
+        # ── ESCALATION fast path — bypass LLM entirely ───────────────────────
+        # When the orchestrator has confirmed escalation, yield TTS FIRST so the
+        # customer hears the confirmation, THEN schedule the tool as a background
+        # task with a small delay.  This ordering is critical:
+        #
+        #   OLD (broken): await esc_tool() → session.escalated=True → yield TTS
+        #     on_item_added fires with escalated=True → calls interrupt() → no audio
+        #
+        #   NEW (correct): yield TTS → on_item_added fires (escalated=False) → audio OK
+        #                  → asyncio.create_task(_escalate()) with 2s sleep
+        #                  → session.escalated=True only after TTS has started
+        if decision is not None:
+            from session.orchestrator_state import ExecutionMode as _EM
+            if decision.mode == _EM.ESCALATION and not session.escalated:
+                caller_name  = getattr(session.orchestrator_state, "escalation_caller_name", "") or ""
+                call_reason  = getattr(session.orchestrator_state, "escalation_call_reason", "") or ""
+                _REASON_PHRASE = {
+                    "Payment Issue":   "payment specialist",
+                    "Fraud Concern":   "fraud specialist",
+                    "Account Access":  "account specialist",
+                    "Dispute":         "dispute resolution team",
+                }
+                specialist = _REASON_PHRASE.get(call_reason, "specialist")
+                if caller_name:
+                    tts = f"Got it {caller_name}, connecting you with a {specialist} right now. Please hold on."
+                else:
+                    tts = f"Connecting you with a {specialist} right now. Please hold on."
+                yield tts  # TTS queued BEFORE escalated=True is set
+
+                esc_tool = next((t for t in tools if _tool_name(t) == "escalate_to_human"), None)
+                if esc_tool is not None:
+                    _cname       = caller_name
+                    _call_reason = call_reason or "General Inquiry"
+                    _call_id     = session.call_id
+
+                    async def _fire_escalation_deferred():
+                        # Sleep gives the SDK time to start AND finish TTS before
+                        # session.escalated=True triggers on_item_added → interrupt().
+                        # 3.5s covers the ~2-3s Deepgram Aura TTS playback for a 15-word phrase.
+                        await asyncio.sleep(3.5)
+                        try:
+                            _reason = _call_reason + (f" — caller: {_cname}" if _cname else "")
+                            await esc_tool(reason=_reason)
+                            logger.info("[%s] escalation tool fired (caller=%s)", _call_id, _cname or "unknown")
+                        except Exception as exc:
+                            logger.warning("[%s] deferred escalation failed: %s", _call_id, exc)
+
+                    asyncio.create_task(_fire_escalation_deferred())
+                else:
+                    logger.warning("[%s] escalate_to_human not found in tools list", session.call_id)
+                return
+
+        # ── 1. Tool scoping ───────────────────────────────────────────────────
+        if decision is not None:
+            filtered_tools = decision.tools_for_llm
+        else:
+            filtered_tools = _filter_tools_by_stage(tools, session)
+
+        # ── 2+3+4+5. Build optimized context copy ────────────────────────────
+        if decision is not None:
+            from voice.context_builder import build_orchestrated_context
+            modified_ctx = build_orchestrated_context(chat_ctx, decision, session)
+        else:
+            modified_ctx = _build_optimized_context(chat_ctx, session)
 
         # Yield through the default node — llm_node must be an async generator
         # so the SDK can stream tokens; a plain async def returning the iterable
         # does not compose correctly with the SDK's streaming pipeline.
         async for chunk in Agent.default.llm_node(self, modified_ctx, filtered_tools, model_settings):
             yield chunk
+
+
+async def _noop_publish(payload: dict) -> None:
+    pass
+
+
+def _get_last_user_text(chat_ctx: ChatContext) -> str:
+    """Return the text of the most recent user ChatMessage, or empty string."""
+    for item in reversed(list(chat_ctx.items)):
+        if isinstance(item, ChatMessage) and item.role == "user":
+            return item.text_content or ""
+    return ""
 
 
 # ── Helper: stage-gated tool filtering ───────────────────────────────────────

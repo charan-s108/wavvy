@@ -25,5 +25,16 @@ alembic upgrade head
 echo "▶ Seeding demo data..."
 python seed.py || echo "   Seed skipped (already up to date)"
 
-echo "▶ Starting Wavvy API + LiveKit Worker..."
-exec supervisord -c supervisord.conf
+echo "▶ Starting Wavvy API..."
+uvicorn main:app --host 0.0.0.0 --port 7860 --workers 2 &
+API_PID=$!
+
+echo "▶ Starting LiveKit Worker..."
+python -m voice.agent_worker start &
+WORKER_PID=$!
+
+# If either process exits, kill the other and propagate the exit code
+wait -n $API_PID $WORKER_PID
+EXIT_CODE=$?
+kill $API_PID $WORKER_PID 2>/dev/null
+exit $EXIT_CODE

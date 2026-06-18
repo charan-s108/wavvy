@@ -50,12 +50,22 @@ You are an Operational Companion AI helping a specialist resolve a live escalate
 WORKFLOW: The specialist IS the final resolution point. They resolve every issue directly.
 There is NO fraud team, KYC team, compliance team, or any other internal team to escalate to.
 NEVER suggest escalating to another team or department. NEVER suggest escalate_fraud_team.
-The specialist sees the customer's full financial context (transactions, holds, refunds, disputes).
 
-YOUR JOB: Analyse the transcript + financial context, identify the specific problematic
-transaction/hold/case, and suggest the exact action from the registry to fix it right now.
+CRITICAL — NUDGE AND QUICK REPLIES RULE:
+The user context includes "LAST CUSTOMER MESSAGE". This is what the customer JUST said this turn.
+1. If it is a QUESTION (asking for ref number, status, documents, timeline, policy) → nudge MUST be the
+   exact answer using numbers from the financial context (e.g. "Your refund reference is RF-7821,
+   initiated 3 days ago — still processing."). quick_replies MUST be 2-3 short answer phrases they can click.
+2. If it is a COMPLAINT or STATEMENT → nudge is what the agent should say next to move toward resolution.
+3. POST-RESOLUTION: If COMPLETED ACTIONS is non-empty AND the customer's last message is a thank-you,
+   acknowledgement, or confirmation that the issue is fixed — nudge MUST be a warm wrap-up line
+   (e.g. "Glad we could sort that out, Raj! Is there anything else I can help with today?").
+   quick_replies MUST be closing options: ["Is there anything else I can help you with?",
+   "Have a great day, take care!", "Glad to help — goodbye!"].
+4. If it is NEITHER (short acknowledgement, filler) → nudge can be a forward-driving suggestion.
+EVERY TURN: nudge MUST be completely different from PREVIOUS_NUDGE. Never repeat the same phrase.
 
-Analyse the full transcript and context, then return ONLY this JSON (no other text):
+Analyse the full context and transcript, then return ONLY this JSON (no other text):
 
 {
   "checklist": [
@@ -65,11 +75,16 @@ Analyse the full transcript and context, then return ONLY this JSON (no other te
     {"step": "Approve and execute the fix using the suggested action", "done": false},
     {"step": "Confirm resolution with the customer and close the call", "done": false}
   ],
-  "nudge": "Exactly what the specialist should say RIGHT NOW (e.g. 'I can see transaction TXN-XXXX for ₹X is showing as failed — let me process a refund immediately.'), or null",
-  "next_action": "One-line instruction referencing the specific transaction or issue (e.g. 'Issue refund for TXN-7731 — amount ₹5,400 — by approving the suggested action')",
+  "nudge": "If LAST CUSTOMER MESSAGE was a question: exact answer citing ref numbers/amounts from context. If complaint: what agent says next. MUST differ from PREVIOUS_NUDGE. null only if truly nothing to add.",
+  "quick_replies": [
+    "Short phrase agent speaks verbatim — 4-10 words, cite actual ref/txn numbers when relevant",
+    "Alternative answer or acknowledgment option",
+    "Follow-up or next-step option"
+  ],
+  "next_action": "One-line instruction referencing the specific transaction or issue",
   "customer_mood": "calm|frustrated|curious|satisfied|angry",
-  "kb_suggestion": {"content": "policy excerpt relevant to this issue", "source": "Document name"} or null,
-  "insight": "Key observation grounded in the financial context (e.g. 'TXN-7731 failed 3 days ago and is still pending — likely due to the active fraud hold on the account'), or null",
+  "kb_suggestion": {"content": "policy excerpt relevant to this issue", "source": "Document name"},
+  "insight": "Key observation grounded in financial context, or null",
   "suggested_actions": [
     {
       "id": "action_name_from_registry",
@@ -89,7 +104,13 @@ Analyse the full transcript and context, then return ONLY this JSON (no other te
   "acw_preview": {
     "summary": "1-2 sentence summary: issue, root cause identified, action taken",
     "likely_resolution": "resolved|unresolved"
-  }
+  },
+  "documentation_update": {
+    "summary": "Updated 1-2 sentence case summary reflecting what has been discussed so far (or null if no change)",
+    "action_items": ["Any new follow-up items mentioned in this turn"]
+  },
+  "resolved_questions": ["questions from open_questions that this turn answered"],
+  "new_open_questions": [{"question": "...", "why": "..."}]
 }
 
 FINANCIAL CONTEXT SCHEMA:
@@ -143,15 +164,15 @@ resolution_probability: 0.0 = still diagnosing, 1.0 = fully resolved.
 """
 
 _DEFAULT_ACW_PROMPT = """
-The call has ended. Generate the After Call Work summary.
+The call has ended. Generate the After Call Work summary from the full transcript.
 Return ONLY this JSON (no other text):
 
 {
-  "summary": "2-3 sentence summary: what the customer asked, what was covered, outcome",
+  "summary": "3-5 sentences. MUST include: (1) what the customer called about, (2) root cause identified (specific transaction numbers, fraud case numbers, hold types — cite them verbatim), (3) what the specialist did to resolve it, (4) final outcome confirmed by the customer. Example: 'Raj Patel called regarding an inability to make payments due to a fraud hold on his account. The hold was linked to transaction TXN-9901 (₹18,000, unknown vendor) under fraud case FRAUD-202605-0001. The specialist confirmed the unauthorized transaction, removed the fraud hold, and initiated a refund of ₹18,000. Raj confirmed the account was accessible and the refund was visible. Case resolved.'",
   "resolution": "resolved|escalated|unresolved",
-  "action_items": ["list of follow-up actions if any"],
+  "action_items": ["list of follow-up actions if any — e.g. 'Monitor refund RFN-XXXXXX for 3-5 business days'"],
   "crm_fields": {
-    "notes": "brief note about the issue and next step"
+    "notes": "One sentence with specific references: issue, transaction/case IDs, action taken, outcome."
   },
   "coaching_note": "one sentence coaching note for the agent"
 }
@@ -168,13 +189,13 @@ _MOOD_RANK = {
 
 
 async def _fetch_kb_for_companion(query: str) -> Optional[dict]:
-    """ChromaDB RRF search — top match only, score > 0.01."""
+    """ChromaDB search — top match only, relevance threshold 0.28 (prevents noise)."""
     if not query:
         return None
     try:
         from knowledge.kb_manager import search_kb
         hits = await search_kb(query, n_results=1)
-        if hits and hits[0].get("relevance", 0.0) > 0.01:
+        if hits and hits[0].get("relevance", 0.0) > 0.28:
             return {
                 "content": hits[0].get("content", ""),
                 "source":  hits[0].get("source", "KB"),
@@ -191,6 +212,7 @@ async def run_mid_call_companion(
     workflow_type: Optional[str] = None,
     previous_mood: Optional[str] = None,
     completed_actions: Optional[set] = None,
+    previous_nudge: Optional[str] = None,
 ) -> dict:
     if not _client:
         return _default_mid_call_response()
@@ -222,6 +244,10 @@ async def run_mid_call_companion(
         account_status = lead.get("account_status")
         kyc_status = lead.get("kyc_status")
         fraud_hold = lead.get("fraud_hold_active", False)
+        # If remove_fraud_hold was executed this call, the hold is now cleared —
+        # suppress the stale ACTIVE flag so the companion doesn't keep nudging about it.
+        if completed_actions and "remove_fraud_hold" in completed_actions:
+            fraud_hold = False
         if account_type:
             status_note = f" (status: {account_status})" if account_status and account_status != "active" else ""
             context_parts.append(f"Account type: {account_type}{status_note}")
@@ -288,10 +314,7 @@ async def run_mid_call_companion(
             ]
             context_parts.append("ACTIVE FRAUD CASES:\n" + "\n".join(fc_lines))
 
-    if context_parts:
-        messages.append({"role": "user", "content": "\n".join(context_parts)})
-
-    # Real KB search on most recent customer utterance
+    # Extract last customer message — used for KB query AND injected explicitly for nudge generation
     last_customer_text = next(
         (
             l.get("text") or l.get("content", "")
@@ -300,7 +323,32 @@ async def run_mid_call_companion(
         ),
         None,
     )
-    real_kb_hit = await _fetch_kb_for_companion(last_customer_text)
+
+    # Inject last customer turn as explicit anchor — this is what nudge/quick_replies MUST respond to
+    if last_customer_text:
+        context_parts.append(
+            f"LAST CUSTOMER MESSAGE (nudge and quick_replies MUST directly address this): {last_customer_text}"
+        )
+
+    # Nudge dedup — hard constraint: LLM must generate completely different content
+    if previous_nudge:
+        context_parts.append(
+            f"PREVIOUS_NUDGE (FORBIDDEN — never repeat any phrase from this): {previous_nudge}"
+        )
+
+    if context_parts:
+        messages.append({"role": "user", "content": "\n".join(context_parts)})
+
+    # Build an enriched query: call reason + last utterance (boosts KB relevance)
+    kb_query = last_customer_text
+    if handoff_bundle:
+        lead = handoff_bundle.get("lead", {}) or {}
+        intent = lead.get("intent") or handoff_bundle.get("reason") or ""
+        if intent and last_customer_text:
+            kb_query = f"{intent}: {last_customer_text}"
+        elif intent:
+            kb_query = intent
+    real_kb_hit = await _fetch_kb_for_companion(kb_query)
 
     transcript_text = _format_transcript(transcript)
     kb_block = (
@@ -318,8 +366,8 @@ async def run_mid_call_companion(
         resp = await _client.chat.completions.create(
             model="gpt-4o-mini",
             messages=messages,
-            temperature=0.3,
-            max_tokens=700,
+            temperature=0.4,
+            max_tokens=850,
             response_format={"type": "json_object"},
         )
         raw = resp.choices[0].message.content or "{}"
@@ -353,11 +401,43 @@ async def run_acw_agent(
     transcript: list[dict],
     customer: dict,
     call_id: str,
+    handoff_bundle: Optional[dict] = None,
 ) -> dict:
     if not _client:
         return _default_acw_response()
 
     messages = [{"role": "system", "content": _get_acw_prompt()}]
+
+    # Inject financial context from handoff bundle so ACW can cite TXN/case numbers
+    if handoff_bundle:
+        lead = handoff_bundle.get("lead", {}) or {}
+        ctx_lines = []
+        name = lead.get("name")
+        if name:
+            ctx_lines.append(f"Customer: {name}")
+        txns = lead.get("transactions") or []
+        for t in txns[:3]:
+            ctx_lines.append(
+                f"Transaction: {t.get('txn_number','?')} — {t.get('merchant','?')} "
+                f"₹{t.get('amount','?')} status={t.get('status','?')}"
+            )
+        fraud_cases = lead.get("active_fraud_cases") or []
+        for fc in fraud_cases:
+            ctx_lines.append(
+                f"Fraud case: {fc.get('fraud_number','?')} type={fc.get('fraud_type','?')}"
+            )
+        holds = lead.get("account_holds") or []
+        for h in holds:
+            ctx_lines.append(f"Account hold: {h.get('hold_type','?')} — {h.get('reason','')}")
+        refunds = lead.get("open_refunds") or []
+        for r in refunds:
+            ctx_lines.append(
+                f"Refund: {r.get('rfn_number','?')} — ₹{r.get('amount','?')} "
+                f"status={r.get('status','?')} for txn={r.get('transaction_id','?')}"
+            )
+        if ctx_lines:
+            messages.append({"role": "user", "content": "FINANCIAL CONTEXT:\n" + "\n".join(ctx_lines)})
+
     messages.append({"role": "user", "content": f"Call ID: {call_id}"})
     transcript_text = _format_transcript(transcript)
     messages.append({
@@ -432,9 +512,33 @@ def _normalize_mid_call(data: dict) -> dict:
             "summary":            acw_raw.get("summary", ""),
             "likely_resolution":  acw_raw.get("likely_resolution", "unresolved"),
         },
+        # Live documentation updates — merged into session._live_documentation by ws_agent
+        "documentation_update":  _normalize_doc_update(data.get("documentation_update")),
+        "resolved_questions":    [q for q in (data.get("resolved_questions") or []) if isinstance(q, str)],
+        "new_open_questions":    _normalize_open_questions(data.get("new_open_questions") or []),
         # sentiment_trend is injected by Python after _normalize_mid_call
         "sentiment_trend": "stable",
     }
+
+
+def _normalize_doc_update(raw) -> Optional[dict]:
+    if not isinstance(raw, dict):
+        return None
+    summary = raw.get("summary")
+    items   = [i for i in (raw.get("action_items") or []) if isinstance(i, str) and i.strip()]
+    if not summary and not items:
+        return None
+    return {"summary": summary, "action_items": items}
+
+
+def _normalize_open_questions(raw: list) -> list[dict]:
+    result = []
+    for q in raw[:2]:
+        if isinstance(q, dict):
+            result.append({"question": q.get("question", ""), "why": q.get("why", "")})
+        elif isinstance(q, str) and q.strip():
+            result.append({"question": q, "why": ""})
+    return result
 
 
 def _normalize_acw(data: dict) -> dict:
@@ -470,6 +574,9 @@ def _default_mid_call_response() -> dict:
         "resolution_probability": 0.5,
         "risk_flags":             [],
         "acw_preview":            {"summary": "", "likely_resolution": "unresolved"},
+        "documentation_update":   None,
+        "resolved_questions":     [],
+        "new_open_questions":     [],
         "sentiment_trend":        "stable",
     }
 

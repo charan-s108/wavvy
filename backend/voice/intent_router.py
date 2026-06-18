@@ -2,11 +2,9 @@
 Layer 1, Step 3: Local intent classification + entity extraction.
 Target: <10ms. Zero API calls. Keyword matching with confidence scoring.
 
-Intent Router is initialization-only. Once a workflow is active, the Workflow Engine
-drives step transitions — the Intent Router is NOT consulted again.
-
-Phase 2.5 — Shadow routing: classify_tier() runs alongside classify_intent() for
-divergence logging. Phase 3 will replace classify_intent() with classify_tier().
+classify_tier() is the primary routing function.  It returns a (RoutingTier,
+TransactionalIntent | None) pair consumed by the orchestrator and agent_session.
+classify_intent() has been deleted — it was the legacy shadow-mode function.
 """
 import re
 import logging
@@ -15,7 +13,7 @@ from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
 
-# ── Three-Tier Routing (Phase 2.5 shadow; Phase 3 primary) ───────────────────
+# ── Three-Tier Routing (primary) ─────────────────────────────────────────────
 
 class RoutingTier(Enum):
     TRANSACTIONAL  = "transactional"   # < 10ms, 0 LLM calls, deterministic
@@ -76,10 +74,7 @@ def classify_tier(
     stt_confidence: float = 1.0,
 ) -> tuple[RoutingTier, TransactionalIntent | None]:
     """
-    Three-tier classifier. Phase 2.5: run in shadow alongside classify_intent().
-    Phase 3: this becomes the primary routing function.
-
-    Returns (RoutingTier, TransactionalIntent | None).
+    Three-tier classifier.  Returns (RoutingTier, TransactionalIntent | None).
     TransactionalIntent is only set for TRANSACTIONAL tier.
     """
     lower = text.lower().strip()
@@ -103,15 +98,6 @@ def classify_tier(
     return RoutingTier.CONVERSATIONAL, None
 
 
-def _tier_to_legacy_intent(tier: RoutingTier, ti: TransactionalIntent | None) -> str:
-    """Map new tier to legacy Intent value for shadow divergence comparison."""
-    if tier == RoutingTier.TRANSACTIONAL:
-        if ti == TransactionalIntent.DEMO_REQUEST:
-            return Intent.DEMO_REQUEST.value
-        return Intent.HUMAN_AGENT.value
-    if tier == RoutingTier.RECOVERY:
-        return Intent.UNKNOWN.value
-    return "conversational"  # CONVERSATIONAL maps to no single legacy intent
 
 INTENT_CONFIDENCE_THRESHOLD = 0.7
 UNKNOWN_ESCALATE_THRESHOLD = 3       # escalate after N consecutive UNKNOWNs
@@ -518,32 +504,3 @@ def _intent_confidence(text: str, patterns: list[str]) -> float:
     return min(0.4 + (matches * 0.2), 0.95)
 
 
-def classify_intent(text: str) -> tuple[Intent, float]:
-    """
-    Returns (Intent, confidence_score).
-    - confidence >= INTENT_CONFIDENCE_THRESHOLD → return that intent
-    - confidence < INTENT_CONFIDENCE_THRESHOLD → return (GENERAL_QA, score)
-    - confidence < 0.4 + no partial match → return (UNKNOWN, score)
-
-    UNKNOWN handling: Workflow Engine checks _consecutive_unknown_intents.
-    Escalation threshold logic belongs to Workflow Engine, NOT here.
-    """
-    scores: dict[Intent, float] = {}
-    for intent, patterns in _INTENT_PATTERNS.items():
-        score = _intent_confidence(text, patterns)
-        if score > 0:
-            scores[intent] = score
-
-    if not scores:
-        return Intent.UNKNOWN, 0.0
-
-    best_intent = max(scores, key=lambda i: scores[i])
-    best_score = scores[best_intent]
-
-    if best_score >= INTENT_CONFIDENCE_THRESHOLD:
-        return best_intent, best_score
-
-    if best_score >= 0.4:
-        return Intent.GENERAL_QA, best_score
-
-    return Intent.UNKNOWN, best_score

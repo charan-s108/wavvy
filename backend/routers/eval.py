@@ -102,7 +102,7 @@ async def agent_evals(agent_id: str, limit: int = 20):
 
 @router.get("/recent/all")
 async def recent_evals(limit: int = 30):
-    """All recent eval scores across all calls — used by supervisor QA page."""
+    """All recent eval scores across all calls — used by admin QA page."""
     async with AsyncSessionLocal() as db:
         result = await db.execute(
             text("""SELECT e.call_id, e.overall_score, e.pass_fail,

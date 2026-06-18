@@ -14,7 +14,7 @@
 
 ## What Is Wavvy?
 
-Wavvy is an open-source Contact Center as a Service (CCaaS) platform. Any business can integrate Wavvy to deploy AI-powered customer workflows — voice AI agents, escalation routing, QA scoring, and supervisor analytics — within hours, not months.
+Wavvy is an open-source Contact Center as a Service (CCaaS) platform. Any business can integrate Wavvy to deploy AI-powered customer workflows — voice AI agents, escalation routing, QA scoring, and admin analytics — within hours, not months.
 
 Wavvy platform demonstrates how modern AI can power enterprise-grade contact centers using fully open-source infrastructure.
 
@@ -34,11 +34,11 @@ Public marketing page with a pulsing call button. Clicking it opens a voice call
 **App 2 — Agent Desktop (wavvy-agent.vercel.app)**
 Human agents receive escalated calls here. The Companion AI panel pre-loads context from the Voice AI conversation, shows a checklist of talking points, and surfaces relevant KB snippets. Agents pick up exactly where the AI left off.
 
-**App 3 — Supervisor Dashboard (wavvy-supervisor.vercel.app)**
-Quality assurance, live call monitoring, knowledge base management, agent coaching packs, and analytics. Supervisors see every call in real time and receive automated QA scores within seconds of call completion.
+**App 3 — Admin Dashboard (wavvy-admin.vercel.app)**
+Quality assurance, live call monitoring, knowledge base management, agent coaching packs, and analytics. Admins see every call in real time and receive automated QA scores within seconds of call completion.
 
 **Backend — FastAPI (Railway)**
-REST API and WebSocket endpoints. Handles LiveKit room creation, Pipecat agent orchestration, ChromaDB knowledge retrieval, PostgreSQL persistence, and QA scoring. Fully async, 4-worker uvicorn, handles 100+ concurrent calls.
+REST API and WebSocket endpoints. Handles LiveKit room creation, LiveKit Agents worker orchestration, ChromaDB knowledge retrieval, PostgreSQL persistence, and QA scoring. Fully async, 4-worker uvicorn, handles 100+ concurrent calls.
 
 ## Open-Source Commitment
 
@@ -94,18 +94,18 @@ On escalation, the Companion AI immediately analyzes the full Voice AI conversat
 As the conversation continues, the Companion updates in real time via WebSocket. It surfaces objection handlers, product talking points, and pricing guidance based on what's being discussed.
 
 **ACW Summary (After-Call Work)**
-When the call ends, the Companion generates an automated wrap-up: resolution summary, action items, CRM fields to update, and a coaching note for the supervisor.
+When the call ends, the Companion generates an automated wrap-up: resolution summary, action items, CRM fields to update, and a coaching note for the admin.
 
-## Operations AI — Supervisor Tools
+## Operations AI — Admin Tools
 
 **Automated QA Scoring**
 Within seconds of a call ending, the QA Agent scores the transcript on six rubrics: guardrail adherence, resolution rate, containment, caller satisfaction, handle time, and disclosure compliance. Overall score and pass/fail are stored to the database.
 
 **Live Call Monitoring**
-The supervisor dashboard shows all active calls in a real-time table (polling every 5 seconds): caller intent, duration, escalation status, and current workflow stage.
+The admin dashboard shows all active calls in a real-time table (polling every 5 seconds): caller intent, duration, escalation status, and current workflow stage.
 
 **Knowledge Base Management**
-Supervisors upload PDF, DOCX, or Markdown documents. The system parses, chunks, embeds, and indexes them into ChromaDB. Documents surface in the next live call's KB retrieval automatically.
+Admins upload PDF, DOCX, or Markdown documents. The system parses, chunks, embeds, and indexes them into ChromaDB. Documents surface in the next live call's KB retrieval automatically.
 
 **Coaching Pack Generation**
 After any agent accumulates 3 or more scored calls, a coaching pack can be generated. It references specific transcript moments, identifies strengths and improvement areas, and generates action items tailored to that agent's performance patterns.
@@ -195,7 +195,7 @@ Every use case follows the same pattern:
 2. **KB answers** — Product documentation surfaces automatically for open-ended Q&A
 3. **Workflow executes** — Deterministic tool calls handle transactional requests
 4. **Human escalates** — Agent Desktop receives full context on complex cases
-5. **Supervisor scores** — QA automation closes the feedback loop on every call
+5. **Admin scores** — QA automation closes the feedback loop on every call
 
 The only thing that changes between deployments is the KB content, the workflow definitions, and the CRM integration. The core platform remains constant.
 
@@ -211,7 +211,7 @@ Wavvy's voice pipeline is built on production-grade open-source components:
 
 **LiveKit Cloud** — WebRTC transport layer. Handles browser audio in/out, room management, and the data channel used for real-time events (transcripts, tool calls, escalation signals). Free tier: 5,000 minutes/month.
 
-**Pipecat (pipecat-ai 1.2.1)** — Voice pipeline orchestration framework. Connects all pipeline stages: STT → processing → LLM → TTS. Handles interruption detection, frame cancellation on barge-in, and pipeline lifecycle.
+**LiveKit Agents** — Voice pipeline orchestration framework. Connects all pipeline stages: STT → processing → LLM → TTS. Handles interruption detection, barge-in, and pipeline lifecycle via the LiveKit Agents worker SDK.
 
 **Silero VAD** — Voice Activity Detection. Runs locally, detects user speech start/stop, enables barge-in interruption of in-flight TTS audio. No API cost, unlimited usage.
 
@@ -223,7 +223,7 @@ Wavvy's voice pipeline is built on production-grade open-source components:
 
 ## Backend Infrastructure
 
-**FastAPI** — Fully async Python web framework. 4-worker uvicorn deployment. Handles REST API, WebSocket connections, and Pipecat agent task launch as background tasks.
+**FastAPI** — Fully async Python web framework. 4-worker uvicorn deployment. Handles REST API, WebSocket connections, and LiveKit Agents worker launch as background tasks.
 
 **PostgreSQL + asyncpg** — Primary database. Connection pool: pool_size=20, max_overflow=10. Tables: calls, transcripts, leads, demo_appointments, eval_scores, agent_profiles, kb_documents, coaching_packs.
 
@@ -244,7 +244,7 @@ Wavvy's voice pipeline is built on production-grade open-source components:
 Three separate React 18 + Vite applications:
 - Landing page (livekit-client JS for WebRTC)
 - Agent desktop (WebSocket to /ws/agent for real-time events)
-- Supervisor dashboard (polling + Recharts for analytics)
+- Admin dashboard (polling + Recharts for analytics)
 
 
 ## Deployment
@@ -288,7 +288,7 @@ At hackathon scale, in-memory state per FastAPI worker is sufficient. Each call 
 
 ## Self-Hosting Overview
 
-Wavvy is fully self-hostable at zero cost. You bring your own API keys for LiveKit, Deepgram, and Groq (all have free tiers). The full platform — voice AI, Agent Desktop, Supervisor Dashboard, and all backend services — runs on your own infrastructure with no vendor lock-in.
+Wavvy is fully self-hostable at zero cost. You bring your own API keys for LiveKit, Deepgram, and Groq (all have free tiers). The full platform — voice AI, Agent Desktop, Admin Dashboard, and all backend services — runs on your own infrastructure with no vendor lock-in.
 
 Self-hosting requires: Python 3.11+, PostgreSQL 16, Node.js 20+, and a Linux/Mac server or cloud VM. Typical setup time: under one hour. No Docker required except for local PostgreSQL.
 
@@ -320,7 +320,7 @@ uvicorn main:app --port 8000   # start backend
 
 Key endpoints:
 
-- `POST /api/livekit/start-call` — create LiveKit room + launch Pipecat agent
+- `POST /api/livekit/start-call` — create LiveKit room + launch LiveKit Agents worker
 - `GET /api/leads` — all captured leads
 - `POST /api/kb/upload` — upload PDF/DOCX/MD to knowledge base
 - `GET /api/calls` — all calls with QA status
@@ -350,13 +350,13 @@ Wavvy connects to Salesforce, HubSpot, and any REST API via its tool layer. Buil
 ### Starter — $299/month
 - Up to 500 call minutes/month
 - Core voice AI, intent routing, KB retrieval
-- Basic analytics, 1 supervisor seat, email support
+- Basic analytics, 1 admin seat, email support
 
 ### Growth — $999/month
 - Up to 2,500 call minutes/month
 - Agent Desktop + Companion AI
-- Full supervisor dashboard (QA, coaching, live monitoring)
-- Up to 5 supervisor seats, priority Slack support
+- Full admin dashboard (QA, coaching, live monitoring)
+- Up to 5 admin seats, priority Slack support
 
 ### Enterprise — Custom pricing
 - Unlimited call minutes (SLA-backed)
@@ -384,7 +384,7 @@ MIT license — no usage fees. Bring your own API keys:
 |---|---|---|
 | Open-source | Yes (MIT) | No |
 | Agent Desktop | Yes (Companion AI) | No |
-| Supervisor Dashboard | Yes (QA, coaching) | Limited |
+| Admin Dashboard | Yes (QA, coaching) | Limited |
 | Deterministic orchestration | Yes (Workflow Engine) | Prompt-based |
 | QA scoring | Yes (automated) | No |
 
@@ -394,7 +394,7 @@ Vapi is a developer-focused voice AI API. Wavvy is a complete platform (three ap
 
 ## Wavvy vs. Bland AI
 
-Bland AI focuses on outbound calling campaigns. Wavvy is inbound-first with full human escalation support. Wavvy has Agent Desktop, Supervisor Dashboard, and QA automation that Bland does not.
+Bland AI focuses on outbound calling campaigns. Wavvy is inbound-first with full human escalation support. Wavvy has Agent Desktop, Admin Dashboard, and QA automation that Bland does not.
 
 ## Wavvy vs. ElevenLabs
 
@@ -412,7 +412,7 @@ ElevenLabs is a TTS API, not a contact center platform. Wavvy uses Kokoro TTS (l
 ## Key Wavvy Differentiators
 
 1. Deterministic orchestration — LLM never decides what to do
-2. Three-app operational stack — Landing + Voice AI, Agent Desktop, Supervisor
+2. Three-app operational stack — Landing + Voice AI, Agent Desktop, Admin
 3. Open-source and self-hostable — no vendor lock-in
 4. Automatic QA — every call scored within 5 seconds
 5. Companion AI — human agents get full context on escalation

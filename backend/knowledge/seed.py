@@ -4,7 +4,7 @@ Seed fin_support KB collection from backend/knowledge/seed_docs/fin/*.md
 Usage (from backend/):
     python -m knowledge.seed
 
-kb_collection is reserved for user-uploaded policies via the Supervisor GUI.
+kb_collection is reserved for user-uploaded policies via the Admin Dashboard.
 """
 from __future__ import annotations
 
@@ -70,7 +70,7 @@ async def main() -> None:
         total_chunks += n_chunks
 
     print(f"\nKB seed complete — {total_chunks} chunks in fin_support.")
-    print("Note: kb_collection is reserved for user-uploaded policies via the Supervisor GUI.")
+    print("Note: kb_collection is reserved for user-uploaded policies via the Admin Dashboard.")
 
 
 if __name__ == "__main__":

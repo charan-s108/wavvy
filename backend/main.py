@@ -28,8 +28,151 @@ from tools import crm_query as crm_query_module
 from agents import companion_agent as companion_module
 from agents import qa_agent as qa_agent_module
 from agents import coaching_agent as coaching_agent_module
+from agents import investigation_agent as investigation_module
 from knowledge import embeddings as embeddings_module
 from knowledge import kb_manager as kb_manager_module
+
+
+logger = logging.getLogger(__name__)
+
+
+async def _backfill_workflow_embeddings() -> None:
+    """Compute and persist intent embeddings for workflows seeded with NULL vectors.
+
+    Called once at startup as a background task.  Any workflow whose
+    intent_embedding column is NULL gets an embedding computed from its
+    intent_definition + few_shot_examples and stored in the DB.  The in-memory
+    workflow cache is reloaded afterward so /api/workflows/internal/match can
+    start matching immediately.
+    """
+    try:
+        from config_loader import get_active_workflows, reload_workflows
+        from knowledge.embeddings import embed_texts
+        from database import AsyncSessionLocal
+        from sqlalchemy import text as _text
+        import json as _json
+
+        workflows = get_active_workflows()
+        missing = [wf for wf in workflows if not wf.intent_embedding]
+        if not missing:
+            logger.info("workflow embeddings: all %d workflows already embedded", len(workflows))
+            return
+
+        logger.info("workflow embeddings: backfilling %d workflow(s) with NULL embedding", len(missing))
+        updated = 0
+        async with AsyncSessionLocal() as db:
+            for wf in missing:
+                texts = [t for t in ([wf.intent_definition] + wf.few_shot_examples) if t.strip()]
+                if not texts:
+                    continue
+                try:
+                    vectors = await embed_texts(texts)
+                    if not vectors:
+                        continue
+                    n   = len(vectors)
+                    dim = len(vectors[0])
+                    avg = [sum(v[i] for v in vectors) / n for i in range(dim)]
+                    await db.execute(
+                        _text(
+                            "UPDATE workflow_definitions "
+                            "SET intent_embedding = CAST(:emb AS jsonb), updated_at = NOW() "
+                            "WHERE id = :id"
+                        ),
+                        {"emb": _json.dumps(avg), "id": wf.id},
+                    )
+                    updated += 1
+                    logger.info("workflow embeddings: embedded '%s' (id=%s)", wf.name, wf.id)
+                except Exception:
+                    logger.exception("workflow embeddings: failed for workflow %s", wf.id)
+
+            await db.commit()
+
+        if updated:
+            await reload_workflows()
+            logger.info(
+                "workflow embeddings: backfilled %d/%d; cache reloaded",
+                updated, len(missing),
+            )
+    except Exception:
+        logger.exception("_backfill_workflow_embeddings: unexpected error (non-fatal)")
+
+
+async def _backfill_kb_postgres(collections: dict) -> None:
+    """
+    Sync kb_documents (PostgreSQL) from ChromaDB at startup.
+
+    Documents ingested directly (seed scripts, ingest_document() calls that
+    bypassed the upload endpoint) exist in ChromaDB but have no PostgreSQL row.
+    GET /api/kb/documents reads from PostgreSQL, so the frontend shows nothing.
+    This inserts any missing rows with status='ready'.
+
+    Deduplicates by filename — when the same file appears in multiple collections
+    (e.g. kb_collection + fin_support both seeded from the same source), only one
+    row is written per unique filename.
+    """
+    import uuid as _uuid
+
+    # Collect unique docs by filename (first-seen wins across all collections)
+    # key: filename → {doc_id, file_type, category, chunk_count}
+    by_filename: dict[str, dict] = {}
+    for col_name, col in collections.items():
+        try:
+            if col.count() == 0:
+                continue
+            results = col.get(include=["metadatas"])
+            for meta in (results.get("metadatas") or []):
+                doc_id   = meta.get("doc_id", "")
+                filename = meta.get("filename", "")
+                if not doc_id or not filename:
+                    continue
+                if filename not in by_filename:
+                    by_filename[filename] = {
+                        "doc_id":     doc_id,
+                        "file_type":  meta.get("file_type", ""),
+                        "category":   meta.get("category", "general"),
+                        "chunk_count": 0,
+                    }
+                if by_filename[filename]["doc_id"] == doc_id:
+                    by_filename[filename]["chunk_count"] += 1
+        except Exception as exc:
+            logger.warning("KB backfill: could not read collection %s: %s", col_name, exc)
+
+    if not by_filename:
+        return
+
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(text("SELECT filename FROM kb_documents"))
+        existing_filenames = {str(row[0]) for row in result.fetchall()}
+
+        inserted = 0
+        for filename, info in by_filename.items():
+            if filename in existing_filenames:
+                continue
+            try:
+                await db.execute(
+                    text("""
+                        INSERT INTO kb_documents (id, filename, file_type, category, chunk_count, status)
+                        VALUES (:id, :fn, :ft, :cat, :cc, 'ready')
+                        ON CONFLICT (id) DO UPDATE SET
+                            chunk_count = EXCLUDED.chunk_count,
+                            status      = 'ready'
+                    """),
+                    {
+                        "id":  _uuid.UUID(info["doc_id"]),
+                        "fn":  filename,
+                        "ft":  info["file_type"],
+                        "cat": info["category"],
+                        "cc":  info["chunk_count"],
+                    },
+                )
+                inserted += 1
+            except Exception as exc:
+                logger.warning("KB backfill: failed to insert %s: %s", filename, exc)
+
+        await db.commit()
+
+    if inserted:
+        logger.info("KB backfill: synced %d doc(s) from ChromaDB → kb_documents", inserted)
 
 
 @asynccontextmanager
@@ -39,6 +182,14 @@ async def lifespan(app: FastAPI):
 
     # Shared AsyncOpenAI client — one instance, async-safe
     openai_client = AsyncOpenAI(api_key=settings.openai_api_key)
+
+    # Backfill missing intent embeddings for seeded workflows.
+    # Workflows are seeded with intent_embedding=NULL (no embedding model at seed time).
+    # Without embeddings, /api/workflows/internal/match returns {"matched": false} for every
+    # utterance and no workflow ever triggers.  This one-time pass ensures every active
+    # workflow has a valid vector before the first call arrives.
+    import asyncio as _asyncio
+    _asyncio.create_task(_backfill_workflow_embeddings())
     app.state.openai_client = openai_client
     sentiment_module.init_openai_client(openai_client)
 
@@ -62,14 +213,20 @@ async def lifespan(app: FastAPI):
     # CRM query module needs the OpenAI client + ChromaDB collections
     crm_query_module.init_crm_query(openai_client, kb_collection, calls_collection)
 
-    # Companion + QA agents
+    # Companion + QA + Investigation agents
     companion_module.init_companion_agent(openai_client)
     qa_agent_module.init_qa_agent(openai_client)
     coaching_agent_module.init_coaching_agent(openai_client)
+    investigation_module.init_investigation_agent(openai_client)
 
     # Embeddings + KB manager
     embeddings_module.init_embeddings(openai_client)
     kb_manager_module.init_kb_manager(kb_collection, calls_collection, collections_dict=collections_dict)
+
+    # Backfill PostgreSQL from ChromaDB — docs seeded directly into ChromaDB
+    # (e.g. via seed scripts) never wrote a row to kb_documents, so the
+    # frontend sees an empty list even though RAG has content.
+    await _backfill_kb_postgres(collections_dict)
 
     # Agent connection registry
     app.state.connected_agents = {}
@@ -103,7 +260,7 @@ app.add_middleware(
 # Routers
 from routers.livekit_router import router as livekit_router
 from routers.ws_agent import router as agent_router
-from routers.ws_supervisor import router as supervisor_router
+from routers.ws_admin import router as admin_ws_router
 from routers.knowledge import router as knowledge_router
 from routers.calls import router as calls_router
 from routers.eval import router as eval_router
@@ -112,11 +269,12 @@ from routers.auth_router import router as auth_router
 from routers.tenant_router import router as tenant_router
 from routers.debug_router import router as debug_router
 from routers.orchestration_router import router as orchestration_router
+from routers.workflows_router import router as workflows_router
 
 app.include_router(auth_router)
 app.include_router(livekit_router)
 app.include_router(agent_router)
-app.include_router(supervisor_router)
+app.include_router(admin_ws_router)
 app.include_router(knowledge_router)
 app.include_router(calls_router)
 app.include_router(eval_router)
@@ -124,6 +282,7 @@ app.include_router(coaching_router)
 app.include_router(tenant_router)
 app.include_router(debug_router)
 app.include_router(orchestration_router)
+app.include_router(workflows_router)
 
 
 @app.get("/api/health")

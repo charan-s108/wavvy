@@ -8,6 +8,7 @@ This router only manages room lifecycle and JWT issuance.
 import asyncio
 import logging
 import uuid
+from datetime import timedelta
 
 import livekit.api as lk_api
 from fastapi import APIRouter, HTTPException, Request
@@ -97,6 +98,7 @@ async def start_call(body: StartCallRequest, request: Request):
         lk_api.AccessToken(settings.livekit_api_key, settings.livekit_api_secret)
         .with_identity("customer")
         .with_name("Visitor")
+        .with_ttl(timedelta(hours=4))
         .with_grants(lk_api.VideoGrants(
             room_join=True,
             room=room_name,
@@ -112,8 +114,8 @@ async def start_call(body: StartCallRequest, request: Request):
         session.initial_topic = body.initial_topic.strip()
     await _create_db_call(call_id)
 
-    from routers.ws_supervisor import broadcast_supervisor_event
-    asyncio.create_task(broadcast_supervisor_event({
+    from routers.ws_admin import broadcast_admin_event
+    asyncio.create_task(broadcast_admin_event({
         "type": "call_started",
         "call_id": call_id,
         "started_at": session.started_at.isoformat(),
@@ -177,7 +179,7 @@ async def sip_inbound_webhook(request: Request):
 async def worker_event(request: Request):
     """
     Called by the LiveKit Agents worker process (separate subprocess) to deliver
-    events that require FastAPI WebSocket access — supervisor push, agent desktop
+    events that require FastAPI WebSocket access — admin push, agent desktop
     incoming_call. The worker cannot access FastAPI's in-memory WebSocket state
     directly, so it POSTs here and we forward to the right connections.
     """
@@ -186,7 +188,7 @@ async def worker_event(request: Request):
     event_type = body.get("event_type", "")
     data = body.get("data", {})
 
-    from routers.ws_supervisor import broadcast_supervisor_event
+    from routers.ws_admin import broadcast_admin_event
 
     if event_type == "escalation":
         handoff = data.get("handoff_bundle", {})
@@ -211,7 +213,7 @@ async def worker_event(request: Request):
             if customer_id:
                 _sess.customer_id = customer_id
 
-        asyncio.create_task(broadcast_supervisor_event({
+        asyncio.create_task(broadcast_admin_event({
             "type": "call_escalated", "call_id": call_id,
         }))
         # Deliver to any connected agent desktop
@@ -235,12 +237,12 @@ async def worker_event(request: Request):
             logger.warning("[%s] worker-event escalation deliver failed: %s", call_id, exc)
 
     elif event_type == "call_started":
-        asyncio.create_task(broadcast_supervisor_event({
+        asyncio.create_task(broadcast_admin_event({
             "type": "call_started", "call_id": call_id, **data,
         }))
 
     elif event_type == "call_ended":
-        asyncio.create_task(broadcast_supervisor_event({
+        asyncio.create_task(broadcast_admin_event({
             "type": "call_ended", "call_id": call_id,
         }))
         # Trigger QA scoring in the FastAPI process (has the OpenAI client)
@@ -274,8 +276,8 @@ async def worker_event(request: Request):
             logger.warning("[%s] otp_sent ws-forward failed: %s", call_id, exc)
 
     elif event_type == "turn_metrics":
-        # Per-turn latency metrics from the worker — push to supervisor dashboard
-        asyncio.create_task(broadcast_supervisor_event({
+        # Per-turn latency metrics from the worker — push to admin dashboard
+        asyncio.create_task(broadcast_admin_event({
             "type": "turn_metrics", "call_id": call_id, **data,
         }))
 
@@ -403,6 +405,7 @@ async def agent_join(body: AgentJoinRequest):
         lk_api.AccessToken(settings.livekit_api_key, settings.livekit_api_secret)
         .with_identity("human-agent")
         .with_name("Specialist")
+        .with_ttl(timedelta(hours=4))
         .with_grants(lk_api.VideoGrants(
             room_join=True,
             room=room_name,

@@ -1,6 +1,6 @@
 """
 Per-turn structured timing logs. Emitted as JSON after every turn.
-Consumed by supervisor dashboard KPI aggregation.
+Consumed by admin dashboard KPI aggregation.
 Auto-logs latency_violation=True when any stage exceeds its budget.
 """
 import json

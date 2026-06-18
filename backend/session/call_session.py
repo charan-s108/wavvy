@@ -6,6 +6,7 @@ from enum import Enum
 from typing import Optional, Any
 
 from session.conversation_state import ConversationStateManager
+from session.orchestrator_state import OrchestratorState
 from voice.conversational_context import ConversationalContext, ConversationMemorySummary
 from voice.conversation_policy import ConversationPolicy
 from voice.turn_context import TurnExecutionContext
@@ -35,6 +36,7 @@ class CallSession:
     conversation_history: list[dict] = field(default_factory=list)
     sentiment_scores: list[float] = field(default_factory=list)
     conv_state: ConversationStateManager = field(default_factory=ConversationStateManager)
+    orchestrator_state: OrchestratorState = field(default_factory=OrchestratorState)
     _seen_transcripts: set = field(default_factory=set)
     kb_hits_used: list[str] = field(default_factory=list)
     started_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
@@ -188,6 +190,13 @@ class CallSession:
 
     # Monotonic start time (for duration-based escalation check in ConversationPolicy)
     _started_monotonic: float = field(default_factory=time.monotonic)
+
+    # Companion AI nudge dedup — last nudge sent to agent; companion must not repeat it
+    _last_nudge: Optional[str] = None
+
+    # Live documentation — built continuously by investigation + companion agents.
+    # Zero-ACW: on end_call, send this directly without an LLM call.
+    _live_documentation: dict = field(default_factory=dict)
 
 
 # Global in-memory call registry — keyed by call_id, never persisted

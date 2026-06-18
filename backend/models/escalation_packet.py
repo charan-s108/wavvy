@@ -162,10 +162,27 @@ def build_escalation_packet(session, reason: str = "customer_request") -> Escala
                 seen.add(step)
                 key_interests.append(step)
 
+    # Name — priority: verified customer_profile > pre-escalation name collection > conv entities
+    orch_state = getattr(session, "orchestrator_state", None)
+    orchestrator_name  = getattr(orch_state, "escalation_caller_name", "") or ""
+    orchestrator_reason = getattr(orch_state, "escalation_call_reason", "") or ""
+    resolved_name = (
+        customer_profile.get("name")
+        or orchestrator_name
+        or entities.get("name")
+    ) or None
+
+    # Use the caller-stated reason (e.g. "Payment Issue") when available; it is
+    # richer than the generic "customer_request" fallback and is displayed
+    # prominently as the "Transfer Reason" in the agent console.
+    if orchestrator_reason:
+        intent_str = orchestrator_reason
+        reason = orchestrator_reason + (f" — caller: {orchestrator_name}" if orchestrator_name else "")
+
     return EscalationPacket(
         call_id=session.call_id,
         lead_id=getattr(session, "lead_id", None),
-        name=entities.get("name") or customer_profile.get("name"),
+        name=resolved_name,
         email=_mask_email(raw_email) if raw_email else None,
         phone=_mask_phone(raw_phone) if raw_phone else None,
         company=entities.get("company"),

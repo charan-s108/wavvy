@@ -282,3 +282,13 @@ async def get_similarity(doc_id: str):
 @router.get("/questions/{doc_id}")
 async def get_questions(doc_id: str):
     return kb_manager.get_suggested_questions(doc_id)
+
+
+@router.post("/rebuild-index")
+async def rebuild_index():
+    """Rebuild BM25 + entity indexes in-process without restarting the server."""
+    kb_manager._rebuild_indexes()
+    ei = len(kb_manager._entity_index)
+    ep = len(kb_manager._entity_pair_index)
+    chunks = len(kb_manager._bm25_corpus)
+    return {"chunks": chunks, "entities": ei, "entity_pairs": ep}

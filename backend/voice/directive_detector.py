@@ -59,7 +59,7 @@ _CORRECT_PATTERNS = [
     r'\bi mean\b', r'\bno not\b', r'\bI said\b',
 ]
 _ESCALATE_PATTERNS = [
-    r'\bhuman\b', r'\bagent\b', r'\bmanager\b', r'\bsupervisor\b',
+    r'\bhuman\b', r'\bagent\b', r'\bmanager\b', r'\badmin\b',
     r'\breal person\b', r'\btalk to\b', r'\bspeak to\b',
     r'\bconnect me\b', r'\bconnect me with\b',
     r'\btransfer\b', r'\brepresentative\b', r'\bcustomer support\b',

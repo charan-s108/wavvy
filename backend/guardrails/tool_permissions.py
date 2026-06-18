@@ -53,10 +53,39 @@ def is_tool_allowed(
     stage: ConversationStage,
     tool_name: str,
     escalated: bool = False,
+    session=None,
 ) -> tuple[bool, str]:
-    """Returns (allowed, reason). Called before every tool execution."""
+    """Returns (allowed, reason). Called before every tool execution.
+
+    When session.orchestrator_state.mode == WORKFLOW, permissions are read from
+    the active node's allowed_tools list (node-scoped).  For GENERAL mode and
+    the legacy fintech workflow the static TOOL_PERMISSIONS table is used.
+    """
     if escalated and tool_name != "escalate_to_human":
         return False, "Session is escalated — only escalate_to_human is permitted"
+
+    # Orchestrator-aware path: delegate to node when in WORKFLOW mode
+    if session is not None:
+        try:
+            from session.orchestrator_state import ExecutionMode
+            state = session.orchestrator_state
+            if state.mode == ExecutionMode.ESCALATION:
+                if tool_name == "escalate_to_human":
+                    return True, ""
+                return False, "Only escalate_to_human permitted in ESCALATION mode"
+            if state.mode == ExecutionMode.WORKFLOW and state.active_workflow_id:
+                from workflow.engine import load_node
+                node = load_node(state.active_workflow_id, state.active_node_id or "")
+                if node is not None:
+                    if tool_name in node.allowed_tools or tool_name == "escalate_to_human":
+                        return True, ""
+                    return False, (
+                        f"Tool '{tool_name}' not in node '{node.name}' allowed_tools"
+                    )
+        except Exception:
+            pass  # fall through to static table on any error
+
+    # Static table (GENERAL mode + legacy fintech workflow)
     allowed = TOOL_PERMISSIONS.get(stage, set())
     if tool_name in allowed:
         return True, ""

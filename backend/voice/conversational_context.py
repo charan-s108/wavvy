@@ -52,7 +52,7 @@ _INTENT_PATTERNS: list[tuple[ConversationalIntent, list[str]]] = [
     ]),
     (ConversationalIntent.TECHNICAL, [
         r'\btech stack\b', r'\bvoice ai\b', r'\barchitecture\b',
-        r'\bpipecat\b', r'\blivekit\b', r'\bdeepgram\b',
+        r'\blivekit\b', r'\bdeepgram\b',
         r'\bkokoro\b', r'\bsilero\b', r'\brag\b', r'\bllm\b',
         r'\bwebrtc\b', r'\bstt\b', r'\btts\b', r'\bvad\b',
     ]),

@@ -16,7 +16,7 @@ export default function LoginPage({ onLogin }) {
     setError('')
     setLoading(true)
     try {
-      const resp = await fetch(`${BACKEND}/api/auth/agent-login`, {
+      const resp = await fetch(`${BACKEND}/api/auth/login`, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({ email, password }),
@@ -26,10 +26,14 @@ export default function LoginPage({ onLogin }) {
         setError(data.detail || 'Invalid email or password')
         return
       }
-      const { token, agent } = await resp.json()
+      const { token, user } = await resp.json()
+      if (user.role !== 'agent') {
+        setError('Access denied. This portal is for agents only. Use the Admin Dashboard.')
+        return
+      }
       localStorage.setItem('wavvy_agent_token', token)
-      localStorage.setItem('wavvy_agent_info',  JSON.stringify(agent))
-      onLogin(agent)
+      localStorage.setItem('wavvy_agent_info',  JSON.stringify(user))
+      onLogin(user)
     } catch {
       setError('Could not reach the server. Check your connection.')
     } finally {
@@ -121,9 +125,6 @@ export default function LoginPage({ onLogin }) {
           </button>
         </form>
 
-        <p className="text-center text-[12px] text-white/18">
-          Demo: <span className="font-mono text-white/35">ananya@fin.ai</span> / <span className="font-mono text-white/35">wavvy2026</span>
-        </p>
       </div>
     </div>
   )

@@ -120,8 +120,8 @@ async def score_call(call_id: str) -> Optional[dict]:
     )
 
     try:
-        from routers.ws_supervisor import broadcast_supervisor_event
-        await broadcast_supervisor_event({
+        from routers.ws_admin import broadcast_admin_event
+        await broadcast_admin_event({
             "type":    "eval_ready",
             "call_id": call_id,
             "scores":  scores,
