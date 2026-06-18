@@ -244,6 +244,55 @@ cd frontend/admin && npm install && npm run dev   # :5175
 
 ---
 
+## Deploy to Production
+
+### Backend → HuggingFace Space (`brocode12/wavvy`)
+
+The HF Space only needs the `backend/` folder. Push it as a subtree so the MP4
+demo videos in `frontend/` never touch HF:
+
+```bash
+# First time or after any backend change
+git push hf $(git subtree split --prefix=backend main):main --force
+```
+
+After pushing, update HF secrets (picks up any new values from `backend/.env`):
+
+```bash
+backend/.venv/bin/python push_hf_secrets.py
+```
+
+### Frontends → Vercel
+
+Each frontend is a separate Vercel project. Re-deploy all three after any
+frontend change (env vars are baked in at build time):
+
+```bash
+# Landing page  →  https://wavvy-ten.vercel.app
+cd frontend/landing
+VITE_BACKEND_HTTP_URL=https://brocode12-wavvy.hf.space \
+VITE_LIVEKIT_URL=wss://wavvy-prod.livekit.cloud \
+vercel build --prod && vercel deploy --prebuilt --prod
+
+# Agent Desktop  →  https://wavvy-agent.vercel.app
+cd frontend/agent
+VITE_BACKEND_HTTP_URL=https://brocode12-wavvy.hf.space \
+VITE_BACKEND_WS_URL=wss://brocode12-wavvy.hf.space \
+vercel build --prod && vercel deploy --prebuilt --prod
+
+# Admin Console  →  https://wavvy-admin-mu.vercel.app
+cd frontend/admin
+VITE_BACKEND_HTTP_URL=https://brocode12-wavvy.hf.space \
+VITE_BACKEND_WS_URL=wss://brocode12-wavvy.hf.space \
+vercel build --prod && vercel deploy --prebuilt --prod
+```
+
+> **Note:** `vercel pull --yes --environment production` must have been run once
+> in each frontend directory to link it to the Vercel project. This is already
+> done — the `.vercel/project.json` files are gitignored locally.
+
+---
+
 ## Environment Variables
 
 `backend/.env`:
