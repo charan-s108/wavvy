@@ -1,45 +1,125 @@
 import { useState } from 'react'
+import { AlertCircle, Wifi, WifiOff } from 'lucide-react'
 
 const BACKEND = import.meta.env.VITE_BACKEND_HTTP_URL || 'http://localhost:8000'
+const ADMIN_URL = 'https://wavvy-admin-mu.vercel.app'
 
-const Y  = '#f4f73d'
-const Wa = (a) => `rgba(255,255,255,${a})`
+const Y = '#f4f73d'
+
+function validate(email, password) {
+  if (!email.trim()) return 'Email is required.'
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return 'Enter a valid email address.'
+  if (!password) return 'Password is required.'
+  if (password.length < 6) return 'Password must be at least 6 characters.'
+  return null
+}
+
+function ErrorBox({ error, type = 'auth' }) {
+  if (!error) return null
+
+  const isNetwork = type === 'network'
+  const bg    = isNetwork ? 'rgba(250,188,45,0.10)' : 'rgba(252,83,91,0.10)'
+  const border = isNetwork ? 'rgba(250,188,45,0.25)' : 'rgba(252,83,91,0.25)'
+  const color  = isNetwork ? '#fabc2d' : '#fc535b'
+  const Icon   = isNetwork ? WifiOff : AlertCircle
+
+  return (
+    <div
+      className="flex items-start gap-2.5 rounded-xl px-4 py-3 text-[13px] leading-relaxed"
+      style={{ background: bg, border: `1px solid ${border}`, color }}
+      role="alert"
+    >
+      <Icon size={15} className="shrink-0 mt-0.5" />
+      <span>{error}</span>
+    </div>
+  )
+}
 
 export default function LoginPage({ onLogin }) {
   const [email,    setEmail]    = useState('')
   const [password, setPassword] = useState('')
   const [error,    setError]    = useState('')
+  const [errType,  setErrType]  = useState('auth')
   const [loading,  setLoading]  = useState(false)
+  const [emailErr, setEmailErr] = useState(false)
+  const [passErr,  setPassErr]  = useState(false)
+
+  const showErr = (msg, type = 'auth') => {
+    setError(msg)
+    setErrType(type)
+  }
 
   const handleSubmit = async (e) => {
     e.preventDefault()
     setError('')
+    setEmailErr(false)
+    setPassErr(false)
+
+    // Client-side validation
+    const validErr = validate(email, password)
+    if (validErr) {
+      showErr(validErr)
+      if (!email.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) setEmailErr(true)
+      if (!password || password.length < 6) setPassErr(true)
+      return
+    }
+
     setLoading(true)
     try {
       const resp = await fetch(`${BACKEND}/api/auth/login`, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ email, password }),
+        body:    JSON.stringify({ email: email.trim(), password }),
+        signal:  AbortSignal.timeout(15000),
       })
+
       if (!resp.ok) {
         const data = await resp.json().catch(() => ({}))
-        setError(data.detail || 'Invalid email or password')
+        if (resp.status === 403 || data.detail?.toLowerCase().includes('admin')) {
+          showErr('This account has admin access, not agent access. Use the Admin Dashboard instead.')
+        } else if (resp.status === 401) {
+          showErr('Invalid email or password. Check your credentials and try again.')
+          setEmailErr(true)
+          setPassErr(true)
+        } else {
+          showErr(data.detail || `Server error (${resp.status}). Please try again.`)
+        }
         return
       }
+
       const { token, user } = await resp.json()
+
       if (user.role !== 'agent') {
-        setError('Access denied. This portal is for agents only. Use the Admin Dashboard.')
+        showErr(`This account has "${user.role}" access. Use the Admin Dashboard for admin accounts.`)
         return
       }
+
       localStorage.setItem('wavvy_agent_token', token)
       localStorage.setItem('wavvy_agent_info',  JSON.stringify(user))
       onLogin(user)
-    } catch {
-      setError('Could not reach the server. Check your connection.')
+
+    } catch (err) {
+      if (err.name === 'TimeoutError' || err.name === 'AbortError') {
+        showErr(
+          'The backend is taking too long to respond. HuggingFace Spaces can take ~30 seconds to wake up from sleep. Please wait and try again.',
+          'network'
+        )
+      } else {
+        showErr(
+          'Could not reach the backend. It may be starting up — please wait ~30 seconds and try again.',
+          'network'
+        )
+      }
     } finally {
       setLoading(false)
     }
   }
+
+  const inputStyle = (hasErr) => ({
+    background: '#050505',
+    border: `1px solid ${hasErr ? 'rgba(252,83,91,0.5)' : 'rgba(255,255,255,0.09)'}`,
+    transition: 'border-color 0.15s',
+  })
 
   return (
     <div className="w-full min-h-screen bg-black text-white flex flex-col items-center justify-center font-sans px-4">
@@ -62,8 +142,9 @@ export default function LoginPage({ onLogin }) {
         {/* Card */}
         <form
           onSubmit={handleSubmit}
+          noValidate
           className="rounded-[24px] p-8 space-y-5"
-          style={{ background: Wa(0.025), border: `1px solid ${Wa(0.08)}` }}
+          style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.08)' }}
         >
           <div className="space-y-1 text-center">
             <h2 className="text-xl font-light text-white">Sign in</h2>
@@ -72,59 +153,58 @@ export default function LoginPage({ onLogin }) {
 
           <div className="space-y-3">
             <div className="space-y-1.5">
-              <label className="text-[12px] uppercase tracking-widest font-semibold text-white/25">Email</label>
+              <label className="text-[12px] uppercase tracking-widest font-semibold text-white/25">
+                Email
+              </label>
               <input
                 type="email"
-                required
                 autoFocus
                 value={email}
-                onChange={e => setEmail(e.target.value)}
+                onChange={e => { setEmail(e.target.value); setEmailErr(false); setError('') }}
                 placeholder="you@fin.ai"
-                className="w-full rounded-xl px-4 py-3 text-sm text-white placeholder-white/18 focus:outline-none transition-colors"
-                style={{
-                  background: '#050505',
-                  border: `1px solid ${Wa(0.09)}`,
-                }}
-                onFocus={e => e.currentTarget.style.borderColor = Wa(0.22)}
-                onBlur={e  => e.currentTarget.style.borderColor = Wa(0.09)}
+                className="w-full rounded-xl px-4 py-3 text-sm text-white placeholder-white/20 focus:outline-none"
+                style={inputStyle(emailErr)}
+                onFocus={e => { if (!emailErr) e.currentTarget.style.borderColor = 'rgba(255,255,255,0.22)' }}
+                onBlur={e  => { if (!emailErr) e.currentTarget.style.borderColor = 'rgba(255,255,255,0.09)' }}
               />
             </div>
 
             <div className="space-y-1.5">
-              <label className="text-[12px] uppercase tracking-widest font-semibold text-white/25">Password</label>
+              <label className="text-[12px] uppercase tracking-widest font-semibold text-white/25">
+                Password
+              </label>
               <input
                 type="password"
-                required
                 value={password}
-                onChange={e => setPassword(e.target.value)}
+                onChange={e => { setPassword(e.target.value); setPassErr(false); setError('') }}
                 placeholder="••••••••"
-                className="w-full rounded-xl px-4 py-3 text-sm text-white placeholder-white/18 focus:outline-none transition-colors"
-                style={{
-                  background: '#050505',
-                  border: `1px solid ${Wa(0.09)}`,
-                }}
-                onFocus={e => e.currentTarget.style.borderColor = Wa(0.22)}
-                onBlur={e  => e.currentTarget.style.borderColor = Wa(0.09)}
+                className="w-full rounded-xl px-4 py-3 text-sm text-white placeholder-white/20 focus:outline-none"
+                style={inputStyle(passErr)}
+                onFocus={e => { if (!passErr) e.currentTarget.style.borderColor = 'rgba(255,255,255,0.22)' }}
+                onBlur={e  => { if (!passErr) e.currentTarget.style.borderColor = 'rgba(255,255,255,0.09)' }}
               />
             </div>
           </div>
 
-          {error && (
-            <p className="text-[13px] text-white/70 text-center font-light">{error}</p>
-          )}
+          <ErrorBox error={error} type={errType} />
 
           <button
             type="submit"
             disabled={loading}
             className="w-full font-bold uppercase text-[13px] tracking-widest py-4 rounded-full transition-all disabled:opacity-40 disabled:cursor-not-allowed"
             style={{ background: Y, color: '#000' }}
-            onMouseEnter={e => { if (!loading) e.currentTarget.style.opacity = '0.9' }}
-            onMouseLeave={e => { e.currentTarget.style.opacity = '1' }}
           >
             {loading ? 'Signing in…' : 'Sign In'}
           </button>
         </form>
 
+        {/* Footer hint */}
+        <p className="text-center text-[12px] text-white/20">
+          Admin?{' '}
+          <a href={ADMIN_URL} className="text-white/40 hover:text-white/70 underline underline-offset-2 transition-colors">
+            Open Admin Dashboard
+          </a>
+        </p>
       </div>
     </div>
   )

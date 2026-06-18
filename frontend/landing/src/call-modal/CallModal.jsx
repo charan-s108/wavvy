@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import { X } from 'lucide-react'
 import { motion, AnimatePresence } from 'motion/react'
 import CallScreen from './CallScreen.jsx'
@@ -46,7 +46,7 @@ function StatusPill({ phase }) {
   )
 }
 
-export default function CallModal({ open, onClose }) {
+export default function CallModal({ open, onClose, backendStatus }) {
   const [phase,       setPhase]       = useState(PHASE.CONNECTING)
   const [transcript,  setTranscript]  = useState([])
   const [micOn,       setMicOn]       = useState(true)
@@ -153,8 +153,14 @@ export default function CallModal({ open, onClose }) {
     onClose()
   }, [isCallActive, endCall, onClose])
 
+  // Track whether we've already started the call this open session
+  const callStartedRef = useRef(false)
+
   useEffect(() => {
-    if (!open) return
+    if (!open) {
+      callStartedRef.current = false
+      return
+    }
     setPhase(PHASE.CONNECTING)
     setTranscript([])
     setAgentBuffer('')
@@ -166,9 +172,18 @@ export default function CallModal({ open, onClose }) {
     setEscalated(false)
     setHumanConnected(false)
     setOtpCode(null)
+    callStartedRef.current = false
+  }, [open])
+
+  // Auto-start the call once backend is online (handles cold-start gracefully)
+  useEffect(() => {
+    if (!open) return
+    if (callStartedRef.current) return
+    if (backendStatus !== 'online') return
+    callStartedRef.current = true
     startCall(null).catch(err => setCallError(err.message))
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open])
+  }, [open, backendStatus])
 
   return (
     <AnimatePresence>
@@ -263,7 +278,7 @@ export default function CallModal({ open, onClose }) {
                       <motion.span
                         key={i}
                         className="absolute rounded-full"
-                        style={{ border: '1px solid rgba(244,247,61,0.18)' }}
+                        style={{ border: `1px solid ${backendStatus === 'online' ? 'rgba(244,247,61,0.18)' : 'rgba(250,188,45,0.15)'}` }}
                         animate={{ width: [44, 44 + (i + 1) * 20], height: [44, 44 + (i + 1) * 20], opacity: [0.7, 0] }}
                         transition={{ duration: 1.6, repeat: Infinity, delay: i * 0.45, ease: [0.2, 0, 0.8, 1] }}
                       />
@@ -272,17 +287,16 @@ export default function CallModal({ open, onClose }) {
                       className="relative flex items-center justify-center rounded-full"
                       style={{
                         width: 44, height: 44,
-                        background: 'rgba(244,247,61,0.07)',
-                        border: '1px solid rgba(244,247,61,0.2)',
+                        background: backendStatus === 'online' ? 'rgba(244,247,61,0.07)' : 'rgba(250,188,45,0.07)',
+                        border: `1px solid ${backendStatus === 'online' ? 'rgba(244,247,61,0.2)' : 'rgba(250,188,45,0.2)'}`,
                       }}
                     >
-                      {/* Animated dots */}
                       <div className="flex gap-1">
                         {[0, 1, 2].map(i => (
                           <motion.span
                             key={i}
                             className="block rounded-full"
-                            style={{ width: 4, height: 4, background: 'var(--yellow-1)' }}
+                            style={{ width: 4, height: 4, background: backendStatus === 'online' ? 'var(--yellow-1)' : '#fabc2d' }}
                             animate={{ opacity: [0.2, 1, 0.2] }}
                             transition={{ duration: 1.2, repeat: Infinity, delay: i * 0.2 }}
                           />
@@ -292,12 +306,28 @@ export default function CallModal({ open, onClose }) {
                   </div>
 
                   <div className="text-center space-y-1.5">
-                    <p className="t-body-16" style={{ color: '#fff', fontWeight: 500 }}>
-                      Connecting to Fin
-                    </p>
-                    <p className="t-body-14" style={{ color: 'rgba(255,255,255,0.32)' }}>
-                      Setting up your secure voice session…
-                    </p>
+                    {backendStatus !== 'online' ? (
+                      <>
+                        <p className="t-body-16" style={{ color: '#fabc2d', fontWeight: 500 }}>
+                          Backend warming up…
+                        </p>
+                        <p className="t-body-14" style={{ color: 'rgba(255,255,255,0.32)' }}>
+                          HuggingFace Spaces can take ~30s to wake up.
+                        </p>
+                        <p className="t-body-14" style={{ color: 'rgba(255,255,255,0.20)' }}>
+                          Your call will start automatically once ready.
+                        </p>
+                      </>
+                    ) : (
+                      <>
+                        <p className="t-body-16" style={{ color: '#fff', fontWeight: 500 }}>
+                          Connecting to Fin
+                        </p>
+                        <p className="t-body-14" style={{ color: 'rgba(255,255,255,0.32)' }}>
+                          Setting up your secure voice session…
+                        </p>
+                      </>
+                    )}
                   </div>
                 </motion.div>
               )}
