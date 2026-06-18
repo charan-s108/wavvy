@@ -1,6 +1,6 @@
 # Wavvy — Sense Intent. Drive Resolution.
 
-> **Live demo:** [wavvy.vercel.app](https://wavvy.vercel.app) · Agent Desktop: [wavvy-agent.vercel.app](https://wavvy-agent.vercel.app) · Admin: [wavvy-admin.vercel.app](https://wavvy-admin.vercel.app)
+> **Live demo:** [wavvy-ten.vercel.app](https://wavvy-ten.vercel.app) · Agent Desktop: [wavvy-agent.vercel.app](https://wavvy-agent.vercel.app) · Admin: [wavvy-admin-mu.vercel.app](https://wavvy-admin-mu.vercel.app)
 
 Wavvy is a real-time voice AI CCaaS platform — LiveKit WebRTC · Deepgram STT · OpenAI LLM · Deepgram TTS · RAG. It ships with **Fin**, a fintech voice agent demo that showcases the full platform: OTP-gated tool execution, hybrid knowledge retrieval, Companion AI for human agents, and human-in-the-loop escalation.
 
