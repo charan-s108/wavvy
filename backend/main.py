@@ -349,9 +349,16 @@ async def lifespan(app: FastAPI):
         settings=chromadb.Settings(anonymized_telemetry=False),
     )
     app.state.chroma_client = chroma_client
-    kb_collection = chroma_client.get_or_create_collection("kb_collection")
-    fin_collection = chroma_client.get_or_create_collection("fin_support")
-    calls_collection = chroma_client.get_or_create_collection("calls_collection")
+
+    def _get_or_create(name: str):
+        try:
+            return chroma_client.get_or_create_collection(name)
+        except Exception:
+            return chroma_client.get_collection(name)
+
+    kb_collection    = _get_or_create("kb_collection")
+    fin_collection   = _get_or_create("fin_support")
+    calls_collection = _get_or_create("calls_collection")
     app.state.kb_collection = kb_collection
     app.state.calls_collection = calls_collection
 

@@ -1,6 +1,6 @@
 # Wavvy — Sense Intent. Drive Resolution.
 
-> **Live demo:** [wavvy-ten.vercel.app](https://wavvy-ten.vercel.app) · Agent Desktop: [wavvy-agent.vercel.app](https://wavvy-agent.vercel.app) · Admin: [wavvy-admin-mu.vercel.app](https://wavvy-admin-mu.vercel.app)
+> **Live demo:** [landing-seven-eta-51.vercel.app](https://landing-seven-eta-51.vercel.app) · Agent Desktop: [wavvy-agent.vercel.app](https://wavvy-agent.vercel.app) · Admin: [wavvy-admin-mu.vercel.app](https://wavvy-admin-mu.vercel.app) · Backend: [brocode12-wavvy.hf.space](https://brocode12-wavvy.hf.space)
 
 Wavvy is a real-time voice AI CCaaS platform — LiveKit WebRTC · Deepgram STT · OpenAI LLM · Deepgram TTS · RAG. It ships with **Fin**, a fintech voice agent demo that showcases the full platform: OTP-gated tool execution, hybrid knowledge retrieval, Companion AI for human agents, and human-in-the-loop escalation.
 
@@ -268,7 +268,7 @@ Each frontend is a separate Vercel project. Re-deploy all three after any
 frontend change (env vars are baked in at build time):
 
 ```bash
-# Landing page  →  https://wavvy-ten.vercel.app
+# Landing page  →  https://landing-seven-eta-51.vercel.app
 cd frontend/landing
 VITE_BACKEND_HTTP_URL=https://brocode12-wavvy.hf.space \
 VITE_LIVEKIT_URL=wss://wavvy-prod.livekit.cloud \
