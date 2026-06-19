@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class EscalationPacket:
     call_id: str
-    lead_id: str | None                  # set if capture_lead ran before escalation
+    lead_id: str | None                  # customer id if identified before escalation
     name: str | None                     # prospect name
     email: str | None                    # prospect email (masked: ar***@company.com)
     phone: str | None                    # prospect phone (masked: ***210)

@@ -16,7 +16,7 @@ import LiveDocumentation     from './components/companion/LiveDocumentation.jsx'
 // SIM — remove this import to disable simulation
 import { useSimulation, SIM_STEP_LABELS }  from './simulation.js'
 
-const BACKEND = import.meta.env.VITE_BACKEND_HTTP_URL || 'http://localhost:8000'
+const BACKEND = import.meta.env.VITE_BACKEND_HTTP_URL || ''
 
 /* ── Palette ─────────────────────────────────────────────────
    Three colors only: #000000 · #ffffff · #f4f73d
@@ -46,6 +46,155 @@ function tsNow() {
 
 function initials(name = '') {
   return name.split(' ').map(p => p[0] || '').join('').toUpperCase().slice(0, 2)
+}
+
+/* ══════════════════════════════════════════════════════════════
+   TOOLKIT PANEL — manual action control for agents
+   All actions go through the same sendActionApproved WebSocket
+   path as companion-suggested actions; backend auto-enriches
+   customer_id from ACTIVE_CALLS.
+═══════════════════════════════════════════════════════════════ */
+const TOOLKIT_GROUPS = [
+  {
+    label: 'Identity Verification',
+    color: '#9543f6',
+    actions: [
+      { id: 'send_otp_to_customer',  label: 'Send OTP',      icon: '📨', params: [] },
+      { id: 'verify_customer_otp',   label: 'Verify OTP',    icon: '🔑', params: [{ key: 'otp_code', label: 'OTP Code', placeholder: '6-digit code', type: 'text', maxLength: 6 }] },
+    ],
+  },
+  {
+    label: 'Account',
+    color: '#fabc2d',
+    actions: [
+      { id: 'unlock_account',   label: 'Unlock Account',     icon: '🔓', params: [] },
+      { id: 'remove_fraud_hold', label: 'Remove Fraud Hold', icon: '🛡', params: [] },
+      { id: 'freeze_account',   label: 'Freeze Account',     icon: '❄', params: [] },
+      { id: 'reset_2fa',        label: 'Reset 2FA',          icon: '🔄', params: [] },
+      { id: 'mark_kyc_verified', label: 'Mark KYC Verified', icon: '✅', params: [] },
+    ],
+  },
+  {
+    label: 'Payments',
+    color: '#1D9E75',
+    actions: [
+      { id: 'issue_refund',    label: 'Issue Refund',    icon: '💸', params: [{ key: 'transaction_id', label: 'TXN ID', placeholder: 'TXN-XXXX', type: 'text' }] },
+      { id: 'reopen_dispute',  label: 'Reopen Dispute',  icon: '📋', params: [{ key: 'dispute_number', label: 'Dispute #', placeholder: 'DSP-XXXX', type: 'text' }] },
+    ],
+  },
+  {
+    label: 'Fraud',
+    color: '#fc535b',
+    actions: [
+      { id: 'escalate_fraud_team', label: 'Escalate Fraud Team', icon: '🚨', params: [] },
+    ],
+  },
+]
+
+function ToolkitPanel({ callId, customer, toolkitStatuses, toolkitMessages, toolkitRefs,
+                        toolkitParams, setToolkitParams, toolkitExpanded, setToolkitExpanded,
+                        fireToolkitAction }) {
+  const noCall = !callId
+  return (
+    <div className="flex flex-col gap-4">
+      {/* Header hint */}
+      <div className="rounded-xl p-3 flex items-start gap-2.5"
+        style={{ background: 'rgba(149,67,246,0.06)', border: '1px solid rgba(149,67,246,0.14)' }}>
+        <span className="text-[13px] mt-0.5">🛠</span>
+        <div>
+          <p className="text-[12px] font-semibold text-white/80">Manual Agent Toolkit</p>
+          <p className="text-[11px] text-white/45 mt-0.5 leading-snug">
+            {noCall ? 'Available when a call is active.' : `Actions run on ${customer?.name || 'this customer'}'s account.`}
+          </p>
+        </div>
+      </div>
+
+      {TOOLKIT_GROUPS.map(group => (
+        <div key={group.label}>
+          <p className="text-[10px] font-semibold uppercase tracking-widest mb-2"
+            style={{ color: group.color, opacity: 0.75 }}>{group.label}</p>
+          <div className="space-y-1.5">
+            {group.actions.map(action => {
+              const status  = toolkitStatuses[action.id] || 'idle'
+              const message = toolkitMessages[action.id] || ''
+              const refs    = toolkitRefs[action.id]
+              const isExpanded = toolkitExpanded === action.id && action.params.length > 0
+              const paramVals  = toolkitParams[action.id] || {}
+
+              return (
+                <div key={action.id} className="rounded-xl overflow-hidden"
+                  style={{ border: `1px solid ${status === 'ok' ? 'rgba(29,158,117,0.25)' : status === 'err' ? 'rgba(252,83,91,0.25)' : 'rgba(255,255,255,0.07)'}`, background: 'rgba(255,255,255,0.02)' }}>
+                  <button
+                    disabled={noCall || status === 'running'}
+                    onClick={() => {
+                      if (action.params.length === 0) {
+                        fireToolkitAction(action.id, {})
+                      } else {
+                        setToolkitExpanded(prev => prev === action.id ? null : action.id)
+                      }
+                    }}
+                    className="w-full flex items-center justify-between px-3 py-2.5 transition-all disabled:opacity-40"
+                    style={{ cursor: noCall || status === 'running' ? 'not-allowed' : 'pointer' }}>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[13px]">{action.icon}</span>
+                      <span className="text-[12px] font-medium text-white/85">{action.label}</span>
+                    </div>
+                    <span className="text-[10px] font-mono px-1.5 py-0.5 rounded-md"
+                      style={{
+                        background: status === 'ok' ? 'rgba(29,158,117,0.12)' : status === 'err' ? 'rgba(252,83,91,0.10)' : status === 'running' ? 'rgba(244,247,61,0.08)' : 'rgba(255,255,255,0.05)',
+                        color:      status === 'ok' ? '#1D9E75' : status === 'err' ? '#fc535b' : status === 'running' ? '#f4f73d' : 'rgba(255,255,255,0.35)',
+                      }}>
+                      {status === 'running' ? '…' : status === 'ok' ? '✓' : status === 'err' ? '✗' : action.params.length > 0 ? '›' : 'Run'}
+                    </span>
+                  </button>
+
+                  {/* Inline param form */}
+                  {isExpanded && (
+                    <div className="px-3 pb-3 space-y-2 border-t border-white/[0.06]">
+                      {action.params.map(p => (
+                        <div key={p.key} className="flex flex-col gap-1 pt-2">
+                          <label className="text-[10px] text-white/45">{p.label}</label>
+                          <input
+                            type={p.type || 'text'}
+                            maxLength={p.maxLength}
+                            placeholder={p.placeholder}
+                            value={paramVals[p.key] || ''}
+                            onChange={e => setToolkitParams(prev => ({
+                              ...prev, [action.id]: { ...(prev[action.id] || {}), [p.key]: e.target.value }
+                            }))}
+                            className="w-full px-2.5 py-1.5 rounded-lg text-[12px] text-white bg-transparent outline-none font-mono"
+                            style={{ border: '1px solid rgba(255,255,255,0.12)', background: 'rgba(255,255,255,0.04)' }}
+                          />
+                        </div>
+                      ))}
+                      <button
+                        onClick={() => fireToolkitAction(action.id, paramVals)}
+                        className="w-full mt-1 py-1.5 rounded-lg text-[11px] font-semibold transition-all"
+                        style={{ background: 'rgba(149,67,246,0.12)', color: '#9543f6', border: '1px solid rgba(149,67,246,0.22)' }}>
+                        Execute
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Result / reference numbers */}
+                  {(message || refs) && (
+                    <div className="px-3 pb-2.5">
+                      {message && <p className="text-[11px] text-white/55 leading-snug">{message}</p>}
+                      {refs && (
+                        <p className="text-[11px] font-mono mt-1" style={{ color: '#f4f73d' }}>
+                          {Object.values(refs).join(' · ')}
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      ))}
+    </div>
+  )
 }
 
 export default function AgentDesktop() {
@@ -112,6 +261,14 @@ export default function AgentDesktop() {
   const [acwPreviewOpen,    setAcwPreviewOpen]    = useState(false)
   // OTP input state: keyed by action.id so each card is independent
   const [otpInputs,         setOtpInputs]         = useState({})
+
+  /* ── Manual Agent Toolkit ─────────────────────────────────── */
+  const [rightTab,          setRightTab]          = useState('companion')  // 'companion' | 'toolkit'
+  const [toolkitStatuses,   setToolkitStatuses]   = useState({})   // {actionName: 'idle'|'running'|'ok'|'err'}
+  const [toolkitMessages,   setToolkitMessages]   = useState({})   // {actionName: string}
+  const [toolkitRefs,       setToolkitRefs]       = useState({})   // {actionName: reference_numbers}
+  const [toolkitParams,     setToolkitParams]     = useState({})   // {actionName: {paramKey: value}}
+  const [toolkitExpanded,   setToolkitExpanded]   = useState(null) // which action row is expanded
   // Account update form state: keyed by action.id
   const [acctUpdateInputs,  setAcctUpdateInputs]  = useState({})
 
@@ -235,7 +392,7 @@ export default function AgentDesktop() {
     if ('insight'       in msg) setInsight(msg.insight)
     // Elite fields
     if (Array.isArray(msg.quick_replies)) setQuickReplies(msg.quick_replies)
-    if (Array.isArray(msg.suggested_actions)) {
+    if (Array.isArray(msg.suggested_actions) && msg.suggested_actions.length > 0) {
       setSuggestedActions(msg.suggested_actions)
       msg.suggested_actions.forEach(a => {
         setActionStatuses(prev => prev[a.id] ? prev : { ...prev, [a.id]: 'pending' })
@@ -245,6 +402,8 @@ export default function AgentDesktop() {
         ])
       })
     }
+    // empty suggested_actions list intentionally not cleared — existing cards drain
+    // naturally when the agent approves/rejects them
     if (msg.resolution_probability != null) setResolutionProb(msg.resolution_probability)
     if (msg.sentiment_trend) setSentimentTrend(msg.sentiment_trend)
     if (Array.isArray(msg.risk_flags))  setRiskFlags(msg.risk_flags)
@@ -299,11 +458,18 @@ export default function AgentDesktop() {
 
   const onActionResult = useCallback((msg) => {
     const key = msg.action
+    const refs = msg.reference_numbers && Object.keys(msg.reference_numbers).length > 0
+      ? msg.reference_numbers : null
     setActionStatuses(prev => ({ ...prev, [key]: msg.success ? 'completed' : 'failed' }))
+    // Toolkit panel status
+    setToolkitStatuses(prev => ({ ...prev, [key]: msg.success ? 'ok' : 'err' }))
+    setToolkitMessages(prev => ({ ...prev, [key]: msg.message || (msg.success ? 'Done' : 'Failed') }))
+    if (refs) setToolkitRefs(prev => ({ ...prev, [key]: refs }))
     if (msg.success) {
+      setToolkitExpanded(prev => prev === key ? null : prev)  // collapse on success
       setActivityTimeline(prev => [
         ...prev,
-        { time: tsNow(), kind: 'action_executed', action: msg.action, message: msg.message || 'Action completed' },
+        { time: tsNow(), kind: 'action_executed', action: msg.action, message: msg.message || 'Action completed', reference_numbers: refs },
       ])
     }
   }, [])
@@ -374,6 +540,7 @@ export default function AgentDesktop() {
     setResolutionProb, setSentimentTrend,
     setRiskFlags, setAcwPreview,
     setCaseInvestigation, setOpenQuestions, setLiveDoc,
+    setRightTab, setToolkitStatuses, setToolkitMessages, setToolkitRefs,
   })
   useEffect(() => () => clearSim(), [clearSim])
 
@@ -474,6 +641,21 @@ export default function AgentDesktop() {
     ])
     sendActionRejected(action.id, callId)
   }, [sendActionRejected, callId])
+
+  /* ── Manual toolkit handler ──────────────────────────────── */
+  const fireToolkitAction = useCallback((actionName, extraPayload = {}) => {
+    if (!callId) return
+    const execId = (typeof crypto !== 'undefined' && crypto.randomUUID)
+      ? crypto.randomUUID() : `exec-${Date.now()}-${Math.random().toString(36).slice(2)}`
+    setToolkitStatuses(prev => ({ ...prev, [actionName]: 'running' }))
+    setToolkitMessages(prev => ({ ...prev, [actionName]: '' }))
+    setToolkitRefs(prev => ({ ...prev, [actionName]: null }))
+    sendActionApproved(actionName, extraPayload, execId, callId)
+    setActivityTimeline(prev => [
+      ...prev,
+      { time: tsNow(), kind: 'action_approved', action: actionName, message: `Manual: ${actionName.replace(/_/g, ' ')}` },
+    ])
+  }, [callId, sendActionApproved])
 
   /* ── Auth gate ────────────────────────────────────────────── */
   if (!agentInfo) return <LoginPage onLogin={handleLogin} />
@@ -1035,21 +1217,22 @@ export default function AgentDesktop() {
         >
           <div className="p-5 flex-1 flex flex-col gap-4 min-h-0 overflow-y-auto">
 
-            {/* Panel header */}
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2.5">
-                <div className="w-6 h-6 rounded-lg flex items-center justify-center"
-                  style={{ background: Ya(0.07), border: `1px solid ${Ya(0.14)}`, color: Y }}>
-                  <Sparkles size={12} />
-                </div>
-                <div>
-                  <p className="text-[13px] font-semibold text-white">Companion AI</p>
-                  <p className="section-label text-[11px] mt-0">Operational co-pilot</p>
-                </div>
+            {/* Panel header + tab toggle */}
+            <div className="flex items-center justify-center relative">
+              <div className="flex items-center gap-1 p-0.5 rounded-lg" style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.07)' }}>
+                {[['companion', 'AI'], ['toolkit', 'Manual']].map(([tab, label]) => (
+                  <button key={tab} onClick={() => setRightTab(tab)}
+                    className="text-[11px] font-semibold px-3 py-1 rounded-md transition-all"
+                    style={rightTab === tab
+                      ? { background: Ya(0.10), color: Y, border: `1px solid ${Ya(0.22)}` }
+                      : { color: 'rgba(255,255,255,0.40)', border: '1px solid transparent' }}>
+                    {label}
+                  </button>
+                ))}
               </div>
               {/* Sentiment trend arrow */}
-              {callerState === 'active' && sentimentTrend !== 'stable' && (
-                <span className="text-[11px] font-semibold px-2 py-1 rounded-full"
+              {rightTab === 'companion' && callerState === 'active' && sentimentTrend !== 'stable' && (
+                <span className="absolute right-0 text-[11px] font-semibold px-2 py-1 rounded-full"
                   style={{
                     background: sentimentTrend === 'improving' ? 'rgba(29,158,117,0.1)' : 'rgba(252,83,91,0.1)',
                     color: sentimentTrend === 'improving' ? '#1D9E75' : '#fc535b',
@@ -1060,7 +1243,21 @@ export default function AgentDesktop() {
               )}
             </div>
 
-            {callerState === 'active' ? (
+            {rightTab === 'toolkit' ? (
+              /* ══ TOOLKIT PANEL ══════════════════════════════════ */
+              <ToolkitPanel
+                callId={callId}
+                customer={customer}
+                toolkitStatuses={toolkitStatuses}
+                toolkitMessages={toolkitMessages}
+                toolkitRefs={toolkitRefs}
+                toolkitParams={toolkitParams}
+                setToolkitParams={setToolkitParams}
+                toolkitExpanded={toolkitExpanded}
+                setToolkitExpanded={setToolkitExpanded}
+                fireToolkitAction={fireToolkitAction}
+              />
+            ) : callerState === 'active' ? (
               <>
                 {/* ── 0. CASE INTELLIGENCE ─────────────────────── */}
                 <DataAlerts inconsistencies={caseInvestigation?.data_inconsistencies || []} />
@@ -1458,6 +1655,11 @@ export default function AgentDesktop() {
                                 <span className="mt-0.5 shrink-0" style={{ color }}>{icon}</span>
                                 <div>
                                   <p className="text-[11px] text-white/65 leading-snug">{ev.message}</p>
+                                  {ev.reference_numbers && (
+                                    <p className="text-[10px] font-mono mt-0.5" style={{ color: '#f4f73d', letterSpacing: '0.04em' }}>
+                                      {Object.values(ev.reference_numbers).join(' · ')}
+                                    </p>
+                                  )}
                                   <p className="text-[10px] font-mono text-white/35 mt-0.5">{ev.time}</p>
                                 </div>
                               </div>

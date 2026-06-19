@@ -21,7 +21,7 @@ export default function CaseAnalysis({
   if (!whatHappened && !knownFacts.length && !openQuestions.length) return null
 
   return (
-    <div className="rounded-[14px] overflow-hidden"
+    <div className="rounded-[14px] overflow-hidden shrink-0"
       style={{ border: `1px solid ${Wa(0.07)}` }}>
 
       {/* Header */}

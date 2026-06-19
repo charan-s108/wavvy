@@ -294,7 +294,7 @@ async def live_calls():
 
 @router.get("/dashboard/kpis")
 async def dashboard_kpis():
-    """Today's aggregate KPIs."""
+    """All-time aggregate KPIs."""
     async with AsyncSessionLocal() as db:
         result = await db.execute(
             text("""SELECT
@@ -303,8 +303,7 @@ async def dashboard_kpis():
                     COUNT(*) FILTER (WHERE escalated=TRUE) as escalated,
                     ROUND(AVG(duration_secs)) as avg_duration,
                     COUNT(*) FILTER (WHERE call_type='voice_ai' AND resolution='resolved') as contained
-                 FROM calls
-                 WHERE started_at >= NOW() - INTERVAL '24 hours'""")
+                 FROM calls""")
         )
         row = result.mappings().first()
 
@@ -312,12 +311,11 @@ async def dashboard_kpis():
     contained = row["contained"] or 0
     containment_rate = round((contained / total * 100), 1) if total > 0 else 0
 
-    # Avg QA score from eval_scores today
+    # Avg QA score across all scored calls
     async with AsyncSessionLocal() as db:
         eq = await db.execute(
             text("""SELECT ROUND(AVG(overall_score)) as avg_score
-                 FROM eval_scores
-                 WHERE created_at >= NOW() - INTERVAL '24 hours'""")
+                 FROM eval_scores""")
         )
         eq_row = eq.mappings().first()
 
@@ -329,3 +327,26 @@ async def dashboard_kpis():
         "avg_score": eq_row["avg_score"] if eq_row and eq_row["avg_score"] else None,
         "containment_rate": containment_rate,
     }
+
+
+@router.get("/dashboard/trend")
+async def dashboard_trend(days: int = 7):
+    """Per-day QA score average for the last N days (default 7)."""
+    days = max(1, min(days, 30))
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            text("""
+                SELECT
+                    TO_CHAR(DATE_TRUNC('day', created_at AT TIME ZONE 'UTC'), 'Dy') AS day,
+                    DATE_TRUNC('day', created_at AT TIME ZONE 'UTC') AS date,
+                    ROUND(AVG(overall_score)) AS avg_score
+                FROM eval_scores
+                WHERE created_at >= NOW() - INTERVAL '1 day' * :days
+                GROUP BY DATE_TRUNC('day', created_at AT TIME ZONE 'UTC')
+                ORDER BY date ASC
+            """),
+            {"days": days},
+        )
+        rows = result.mappings().all()
+
+    return [{"day": r["day"], "avg_score": int(r["avg_score"])} for r in rows]

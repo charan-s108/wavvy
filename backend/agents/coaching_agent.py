@@ -5,21 +5,27 @@ logger = logging.getLogger(__name__)
 
 _client = None
 
-_DEFAULT_COACHING_PROMPT = """You are an AI coaching specialist.
-You will receive a list of completed call evaluations for a single agent.
-Generate a personalized coaching pack based on their real performance data.
+_DEFAULT_COACHING_PROMPT = """You are a Voice AI performance analyst.
+You will receive a list of completed call evaluations for a Voice AI agent.
+Generate an optimization coaching pack that helps the product team improve the Voice AI's performance.
 
-Be specific — reference actual patterns across the calls (scores, common violations, resolution trends).
-Be constructive and actionable. Never generic.
+Be specific — identify recurring patterns across calls:
+- Which rubric criteria consistently score low?
+- What violations appear most often?
+- Where does the AI fail to resolve before escalating?
+- What types of calls show the worst satisfaction scores?
+
+Output actionable recommendations for the team: prompt tuning, workflow node adjustments, KB content gaps.
+Never be generic. Every recommendation must be grounded in the evaluation data provided.
 
 Return ONLY valid JSON in this exact schema:
 {
   "overall_trend": "improving" | "declining" | "stable",
-  "strengths": ["specific strength 1", "specific strength 2", "specific strength 3"],
-  "improvements": ["specific area to improve 1", "specific area to improve 2"],
+  "strengths": ["what the Voice AI consistently does well — pattern-based, specific"],
+  "improvements": ["specific failure pattern with data backing — e.g. 'resolution_rate averages 52% — AI fails to confirm outcomes before ending calls'"],
   "action_items": [
-    {"priority": "high" | "medium" | "low", "action": "specific actionable step", "metric": "what to measure"},
-    {"priority": "high" | "medium" | "low", "action": "specific actionable step", "metric": "what to measure"}
+    {"priority": "high" | "medium" | "low", "action": "specific optimization step for the team", "metric": "what to measure to confirm improvement"},
+    {"priority": "high" | "medium" | "low", "action": "specific optimization step for the team", "metric": "what to measure to confirm improvement"}
   ],
   "score_summary": {
     "avg_overall": 75,
@@ -30,10 +36,10 @@ Return ONLY valid JSON in this exact schema:
     "pass_rate": 0.67,
     "calls_analyzed": 3
   },
-  "coaching_note": "One paragraph personalized coaching message for the agent."
+  "coaching_note": "One paragraph analysis for the team: what patterns emerged, what to prioritize in the next iteration of the Voice AI."
 }
 
-Temperature 0.4. Focus on actionable improvements backed by data from the evaluations provided."""
+Temperature 0.4. Ground every finding in the evaluation data provided."""
 
 
 def _get_coaching_prompt() -> str:

@@ -115,8 +115,8 @@ class WavvyAgent(Agent):
         turn_ctx: ChatContext,
         new_message: ChatMessage,
     ) -> None:
-        # Escalated or human taken over — do not prefetch KB or trigger LLM
-        if self._session.escalated or self._session.human_joined:
+        # Escalated (or escalation in flight) or human taken over — skip KB prefetch + LLM
+        if self._session.escalated or self._session.human_joined or getattr(self._session, '_esc_task_pending', False):
             return
         text = new_message.text_content or ""
         if text.strip():
@@ -151,10 +151,10 @@ class WavvyAgent(Agent):
     ):
         session = self._session
 
-        # Escalated or human taken over — do not invoke the LLM at all.
+        # Escalated (or escalation in flight) or human taken over — do not invoke LLM.
         # Returning from an async generator produces an empty stream, which the
         # SDK handles gracefully (no TTS, no response).
-        if session.escalated or session.human_joined:
+        if session.escalated or session.human_joined or getattr(session, '_esc_task_pending', False):
             return
 
         # Wait for in-flight KB prefetch (max 1.5s) before building context.
@@ -201,8 +201,13 @@ class WavvyAgent(Agent):
         #                  → session.escalated=True only after TTS has started
         if decision is not None:
             from session.orchestrator_state import ExecutionMode as _EM
-            if decision.mode == _EM.ESCALATION and not session.escalated:
-                caller_name  = getattr(session.orchestrator_state, "escalation_caller_name", "") or ""
+            if decision.mode == _EM.ESCALATION and not session.escalated and not getattr(session, '_esc_task_pending', False):
+                # Fall back to verified customer name when name-collection flow was skipped
+                caller_name = (
+                    getattr(session.orchestrator_state, "escalation_caller_name", "") or
+                    (getattr(session, "customer_profile", None) or {}).get("first_name") or
+                    ""
+                )
                 call_reason  = getattr(session.orchestrator_state, "escalation_call_reason", "") or ""
                 _REASON_PHRASE = {
                     "Payment Issue":   "payment specialist",
@@ -217,27 +222,51 @@ class WavvyAgent(Agent):
                     tts = f"Connecting you with a {specialist} right now. Please hold on."
                 yield tts  # TTS queued BEFORE escalated=True is set
 
+                # Guard against re-entry during the deferred 3.5s window.
+                # Set AFTER yield so on_item_added fires with _esc_task_pending=False → audio OK.
+                # Checked in on_user_turn_completed and llm_node to stop the second trigger.
+                session._esc_task_pending = True
+
                 esc_tool = next((t for t in tools if _tool_name(t) == "escalate_to_human"), None)
                 if esc_tool is not None:
                     _cname       = caller_name
                     _call_reason = call_reason or "General Inquiry"
                     _call_id     = session.call_id
+                    _publish_evt = self._publish_event  # captured for recovery notification
 
                     async def _fire_escalation_deferred():
                         # Sleep gives the SDK time to start AND finish TTS before
                         # session.escalated=True triggers on_item_added → interrupt().
-                        # 3.5s covers the ~2-3s Deepgram Aura TTS playback for a 15-word phrase.
+                        # 3.5s covers the ~2-3s Cartesia TTS playback for a 15-word phrase.
                         await asyncio.sleep(3.5)
                         try:
                             _reason = _call_reason + (f" — caller: {_cname}" if _cname else "")
                             await esc_tool(reason=_reason)
-                            logger.info("[%s] escalation tool fired (caller=%s)", _call_id, _cname or "unknown")
+                            if session.escalated:
+                                logger.info("[%s] escalation tool fired (caller=%s)", _call_id, _cname or "unknown")
+                            else:
+                                # Tool ran but escalation didn't complete — most likely cause:
+                                # no agent consoles are connected so availability check returned False.
+                                # Notify the frontend to cancel the transfer screen so the customer
+                                # isn't stuck staring at "Connecting to specialist…" indefinitely.
+                                logger.warning(
+                                    "[%s] escalation tool returned but session.escalated=False "
+                                    "(caller=%s) — no agents available; cancelling transfer screen",
+                                    _call_id, _cname or "unknown",
+                                )
+                                asyncio.create_task(_publish_evt({
+                                    "type": "escalation_cancelled",
+                                    "reason": "no_specialists_available",
+                                }))
+                                session._esc_task_pending = False  # allow retry on next user turn
                         except Exception as exc:
                             logger.warning("[%s] deferred escalation failed: %s", _call_id, exc)
+                            session._esc_task_pending = False  # allow retry
 
                     asyncio.create_task(_fire_escalation_deferred())
                 else:
                     logger.warning("[%s] escalate_to_human not found in tools list", session.call_id)
+                    session._esc_task_pending = False
                 return
 
         # ── 1. Tool scoping ───────────────────────────────────────────────────

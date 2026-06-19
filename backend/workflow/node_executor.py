@@ -306,6 +306,7 @@ async def _handle_auto_actions(
     context_additions: list[dict] = []
     last_fast_key = "success"
     _compress_verification = False
+    _directive_template_vars: dict[str, str] = {}  # filled by action handlers, applied to directive
 
     # Validate slot formats before firing any auto_action.
     # Prevents cross-slot contamination (OTP digits used as TXN ID, etc.).
@@ -403,6 +404,7 @@ async def _handle_auto_actions(
         elif action_name == "initiate_refund":
             rfn = tool_result.data.get("rfn_number", "")
             if fast_key == "success" and rfn:
+                _directive_template_vars["rfn_number"] = rfn
                 context_additions.append({
                     "role": "developer",
                     "content": (
@@ -443,6 +445,7 @@ async def _handle_auto_actions(
         elif action_name == "raise_dispute":
             dsp = tool_result.data.get("dsp_number", "")
             if fast_key == "dispute_filed" and dsp:
+                _directive_template_vars["dsp_number"] = dsp
                 context_additions.append({
                     "role": "developer",
                     "content": (
@@ -460,6 +463,7 @@ async def _handle_auto_actions(
         elif action_name == "report_fraud":
             fraud_num = tool_result.data.get("fraud_number", "")
             if fast_key == "fraud_case_opened" and fraud_num:
+                _directive_template_vars["fraud_number"] = fraud_num
                 context_additions.append({
                     "role": "developer",
                     "content": (
@@ -498,6 +502,12 @@ async def _handle_auto_actions(
         # over the generic _resolve_outcome_directive fallback.
         state.exit_workflow()
         directive = node.directive or _resolve_outcome_directive(node, last_fast_key)
+        # Substitute any [placeholder] tokens that were populated by action handlers
+        # (e.g. [dsp_number], [rfn_number], [fraud_number]).  Without this the LLM
+        # sees the literal placeholder and invents a value by pattern-matching against
+        # known IDs in its context (e.g. TXN-3300 → DSP-3300).
+        for key, val in _directive_template_vars.items():
+            directive = directive.replace(f"[{key}]", val)
         return NodeAdvanceResult(
             directive=directive,
             tools_for_llm=[],
@@ -731,7 +741,7 @@ def _build_customer_context_message(profile: dict) -> str:
 
     lines = [
         f"MANDATORY NAME RULE: Call this customer '{first_name}' in EVERY response — no exceptions.",
-        "[Customer Verified]",
+        "[Account data — identity already confirmed; do NOT say 'you are verified' or 'verification complete']",
         f"Name on account: {name} (use first name '{first_name}' in all speech).",
         f"Account: {acct_type} | status: {acct_status} | KYC: {kyc}",
     ]

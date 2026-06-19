@@ -59,9 +59,6 @@ class CallSession:
     # Identity guard
     identity_corrected: bool = False              # True after first name-confusion correction
 
-    # Lead capture — set after capture_lead succeeds
-    lead_id: Optional[str] = None
-
     # Verified customer — set after verify_account succeeds (fintech Fin flow)
     customer_id: Optional[str] = None
 
@@ -100,14 +97,6 @@ class CallSession:
 
     # Orchestration — actions already executed this call; prevents companion re-suggesting them
     completed_actions: set = field(default_factory=set)
-
-    # Pending demo slot — set when needs_confirmation=True; consumed by confirm_pending=True call
-    pending_slot: Optional[dict] = None
-
-    # Confirmed visitor identity — set after first successful capture_lead
-    # Used by all subsequent tool calls to avoid re-asking / greeting extraction
-    confirmed_name:  Optional[str] = None
-    confirmed_email: Optional[str] = None
 
     # Cached customer profile — set after verify_account succeeds.
     # Contains: name, first_name, email, phone, account_type, account_status,

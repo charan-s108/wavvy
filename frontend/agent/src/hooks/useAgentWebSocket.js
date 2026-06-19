@@ -1,6 +1,8 @@
 import { useRef, useCallback, useEffect } from 'react'
 
-const WS_BASE = import.meta.env.VITE_BACKEND_WS_URL || 'ws://localhost:8000'
+const _HTTP = import.meta.env.VITE_BACKEND_HTTP_URL || ''
+const WS_BASE = import.meta.env.VITE_BACKEND_WS_URL ||
+  (_HTTP ? _HTTP.replace(/^http/, 'ws') : `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}`)
 const BACKOFF  = [1000, 2000, 4000, 8000, 16000]
 
 export function useAgentWebSocket({

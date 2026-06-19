@@ -45,7 +45,7 @@ async def _create_db_call(call_id: str) -> None:
         logger.error(f"[{call_id}] DB call insert failed: {exc}")
 
 
-async def _persist_call_end(call_id: str, conversation_history: list) -> None:
+async def _persist_call_end(call_id: str, conversation_history: list, session=None) -> None:
     try:
         turns = [
             m for m in conversation_history
@@ -54,13 +54,25 @@ async def _persist_call_end(call_id: str, conversation_history: list) -> None:
         full_text = " ".join(m["content"] for m in turns)
         speaker_map = {"user": "customer", "assistant": "voice_ai"}
 
+        escalated   = getattr(session, "escalated",   False) if session else False
+        customer_id = getattr(session, "customer_id", None)  if session else None
+        resolution  = "escalated" if escalated else "resolved"
+
         async with AsyncSessionLocal() as db:
             await db.execute(
                 text("""UPDATE calls
                         SET status = 'completed', ended_at = NOW(),
-                            voice_ai_summary = :s
+                            voice_ai_summary = :s,
+                            resolution = :resolution,
+                            duration_secs = EXTRACT(EPOCH FROM (NOW() - started_at))::INTEGER,
+                            customer_id = COALESCE(customer_id, :cid)
                         WHERE id = :id"""),
-                {"id": uuid.UUID(call_id), "s": full_text[:2000] if full_text else None},
+                {
+                    "id":  uuid.UUID(call_id),
+                    "s":   full_text[:2000] if full_text else None,
+                    "resolution": resolution,
+                    "cid": uuid.UUID(customer_id) if customer_id else None,
+                },
             )
             for m in turns:
                 await db.execute(

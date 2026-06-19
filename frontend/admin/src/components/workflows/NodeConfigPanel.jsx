@@ -10,7 +10,7 @@ const ALL_TOOLS   = [
   'lookup_transaction', 'search_transactions', 'check_payment_status',
   'get_account_holds', 'get_refund_status', 'get_dispute_status',
   'unlock_account', 'initiate_refund', 'raise_dispute', 'report_fraud',
-  'escalate_to_human', 'capture_lead', 'schedule_demo', 'cancel_demo',
+  'escalate_to_human',
 ]
 const BIZ_TOOLS   = ['verify_account', 'send_otp', 'verify_otp', 'initiate_refund',
                      'unlock_account', 'raise_dispute', 'report_fraud', 'escalate_to_human']

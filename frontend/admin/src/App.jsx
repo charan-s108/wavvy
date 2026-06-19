@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import { TrendingUp, TrendingDown, Minus, Sparkles, Loader, RefreshCw } from 'lucide-react'
 import LoginPage from './LoginPage.jsx'
 import TopBar from './components/layout/TopBar.jsx'
 import SideNav from './components/layout/SideNav.jsx'
@@ -11,13 +12,12 @@ import ViolationsList from './components/qa/ViolationsList.jsx'
 import DocumentUpload from './components/knowledge/DocumentUpload.jsx'
 import DocumentList from './components/knowledge/DocumentList.jsx'
 import KBTestSearch from './components/knowledge/KBTestSearch.jsx'
-import AgentSelector from './components/coaching/AgentSelector.jsx'
 import CoachingPackCard from './components/coaching/CoachingPackCard.jsx'
-import GeneratePackButton from './components/coaching/GeneratePackButton.jsx'
 import { useAdminWS } from './hooks/useAdminWS.js'
 import AgentConfigPanel    from './components/config/AgentConfigPanel.jsx'
 import WorkflowsPage       from './components/workflows/WorkflowsPage.jsx'
 import PromptStudioPage    from './components/prompt-studio/PromptStudioPage.jsx'
+import Drawer              from './components/layout/Drawer.jsx'
 
 const API = import.meta.env.VITE_BACKEND_HTTP_URL || 'http://localhost:8000'
 
@@ -68,10 +68,12 @@ function Dashboard({ user, onLogout }) {
   const [selectedEval, setSelectedEval] = useState(null)
   const [kbAutoQuery, setKbAutoQuery] = useState('')
 
-  const [agents, setAgents] = useState([])
-  const [selectedAgent, setSelectedAgent] = useState(null)
-  const [coachingPacks, setCoachingPacks] = useState([])
-  const [loadingPacks, setLoadingPacks] = useState(false)
+  const [voiceAiStats, setVoiceAiStats]   = useState(null)
+  const [voiceAiPacks, setVoiceAiPacks]   = useState([])
+  const [loadingStats, setLoadingStats]   = useState(false)
+  const [loadingPacks, setLoadingPacks]   = useState(false)
+  const [generatingPack, setGeneratingPack] = useState(false)
+  const [generateError, setGenerateError]   = useState(null)
 
   const { liveCalls, kpis, callHistory, evals, connected, loading, refetchEvals } = useAdminWS()
 
@@ -92,32 +94,33 @@ function Dashboard({ user, onLogout }) {
   }, [documents, fetchDocs])
 
   useEffect(() => {
-    if (page === 'qa') refetchEvals()
+    if (page === 'qa' || page === 'overview') refetchEvals()
   }, [page, refetchEvals])
 
-  const fetchAgents = useCallback(async () => {
+  const fetchVoiceAiStats = useCallback(async () => {
+    setLoadingStats(true)
     try {
-      const resp = await fetch(`${API}/api/agents`)
-      if (resp.ok) setAgents(await resp.json())
+      const resp = await fetch(`${API}/api/coaching/voice-ai/stats`)
+      if (resp.ok) setVoiceAiStats(await resp.json())
     } catch { /* ignore */ }
+    finally { setLoadingStats(false) }
   }, [])
 
-  const fetchPacksForAgent = useCallback(async (agentId) => {
+  const fetchVoiceAiPacks = useCallback(async () => {
     setLoadingPacks(true)
     try {
-      const resp = await fetch(`${API}/api/coaching/packs/${agentId}`)
-      if (resp.ok) setCoachingPacks(await resp.json())
+      const resp = await fetch(`${API}/api/coaching/voice-ai/packs`)
+      if (resp.ok) setVoiceAiPacks(await resp.json())
     } catch { /* ignore */ }
     finally { setLoadingPacks(false) }
   }, [])
 
   useEffect(() => {
-    if (page === 'coaching') fetchAgents()
-  }, [page, fetchAgents])
-
-  useEffect(() => {
-    if (selectedAgent) fetchPacksForAgent(selectedAgent.agent_id)
-  }, [selectedAgent, fetchPacksForAgent])
+    if (page === 'coaching') {
+      fetchVoiceAiStats()
+      fetchVoiceAiPacks()
+    }
+  }, [page, fetchVoiceAiStats, fetchVoiceAiPacks])
 
   return (
     <div className="flex flex-col h-screen" style={{ background: '#000', color: '#fff' }}>
@@ -134,7 +137,7 @@ function Dashboard({ user, onLogout }) {
               <div className="flex flex-col gap-6">
                 <PageHeader label="Dashboard" title="Overview" />
                 <KPIStrip kpis={kpis} />
-                <TrendChart data={null} />
+                <TrendChart evals={evals} />
               </div>
             )}
 
@@ -206,76 +209,97 @@ function Dashboard({ user, onLogout }) {
                   )}
                 </div>
 
-                {selectedEval && (
-                  <div className="flex flex-col gap-4 animate-fade-in">
-                    <QAScorecard eval={selectedEval} />
-                    <ViolationsList
-                      violations={selectedEval.violations}
-                      strengths={selectedEval.strengths}
-                    />
-                  </div>
-                )}
+                <Drawer
+                  open={!!selectedEval}
+                  onClose={() => setSelectedEval(null)}
+                  title={selectedEval?.customer_name || `Call ${selectedEval?.call_id?.slice(0,8)}`}
+                  subtitle={selectedEval?.call_started_at
+                    ? new Date(selectedEval.call_started_at).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' })
+                    : undefined}
+                  width={520}
+                >
+                  {selectedEval && (
+                    <div className="flex flex-col gap-6">
+                      <QAScorecard eval={selectedEval} />
+                      <ViolationsList
+                        violations={selectedEval.violations}
+                        strengths={selectedEval.strengths}
+                      />
+                    </div>
+                  )}
+                </Drawer>
               </div>
             )}
 
             {/* ── COACHING ─────────────────────────────────────── */}
             {page === 'coaching' && (
               <div className="flex flex-col gap-6">
-                <PageHeader label="Agent Development" title="Coaching Packs" />
+                <PageHeader
+                  label="Voice AI Optimization"
+                  title="AI Coaching"
+                  right={
+                    <button
+                      onClick={() => { fetchVoiceAiStats(); fetchVoiceAiPacks() }}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] transition-opacity hover:opacity-70"
+                      style={{ background: Wa(0.05), border: `1px solid ${Wa(0.10)}`, color: Wa(0.55) }}
+                    >
+                      <RefreshCw size={11} />
+                      Refresh
+                    </button>
+                  }
+                />
 
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
-                  <div className="flex flex-col gap-3">
-                    <p className="section-label">Select Agent</p>
-                    <AgentSelector
-                      agents={agents}
-                      selectedId={selectedAgent?.agent_id}
-                      onSelect={agent => {
-                        setSelectedAgent(agent)
-                        setCoachingPacks([])
-                      }}
-                    />
-                  </div>
+                {/* Stats row */}
+                <VoiceAiStatsRow stats={voiceAiStats} loading={loadingStats} />
 
-                  <div className="flex flex-col gap-4">
-                    {selectedAgent ? (
-                      <>
-                        <div className="flex items-center justify-between">
-                          <p className="section-label">{selectedAgent.name}</p>
-                          <GeneratePackButton
-                            agentId={selectedAgent.agent_id}
-                            scoredCalls={selectedAgent.scored_calls}
-                            onGenerated={pack => setCoachingPacks(prev => [pack, ...prev])}
-                          />
-                        </div>
-
-                        {loadingPacks ? (
-                          <div className="rounded-2xl p-8 text-center"
-                            style={{ background: Wa(0.02), border: `1px solid ${Wa(0.06)}` }}>
-                            <p className="t-body-14 text-white/45">Loading packs…</p>
-                          </div>
-                        ) : coachingPacks.length === 0 ? (
-                          <div className="rounded-2xl p-8 text-center"
-                            style={{ background: Wa(0.02), border: `1px solid ${Wa(0.06)}` }}>
-                            <p className="t-body-14 text-white/45">
-                              No coaching packs yet — click Generate to create one
-                            </p>
-                          </div>
-                        ) : (
-                          <div className="flex flex-col gap-4">
-                            {coachingPacks.map(pack => (
-                              <CoachingPackCard key={pack.pack_id} pack={pack} />
-                            ))}
-                          </div>
-                        )}
-                      </>
-                    ) : (
-                      <div className="rounded-2xl p-8 text-center"
-                        style={{ background: Wa(0.02), border: `1px solid ${Wa(0.06)}` }}>
-                        <p className="t-body-14 text-white/45">Select an agent to view or generate coaching packs</p>
-                      </div>
-                    )}
-                  </div>
+                {/* Generate button */}
+                <div className="flex items-center justify-between">
+                  <p className="section-label">Coaching Packs</p>
+                  <VoiceAiGenerateButton
+                    stats={voiceAiStats}
+                    generating={generatingPack}
+                    error={generateError}
+                    onGenerate={async () => {
+                      setGeneratingPack(true)
+                      setGenerateError(null)
+                      try {
+                        const resp = await fetch(`${API}/api/coaching/voice-ai/generate`, { method: 'POST' })
+                        const body = await resp.json()
+                        if (!resp.ok) throw new Error(body.detail || `Error ${resp.status}`)
+                        setVoiceAiPacks(prev => [body, ...prev])
+                        await fetchVoiceAiStats()
+                      } catch (err) {
+                        setGenerateError(err.message)
+                      } finally {
+                        setGeneratingPack(false)
+                      }
+                    }}
+                  />
                 </div>
+
+                {/* Packs list */}
+                {loadingPacks ? (
+                  <div className="rounded-2xl p-8 text-center"
+                    style={{ background: Wa(0.02), border: `1px solid ${Wa(0.06)}` }}>
+                    <p className="t-body-14 text-white/45">Loading coaching packs…</p>
+                  </div>
+                ) : voiceAiPacks.length === 0 ? (
+                  <div className="rounded-2xl p-10 text-center flex flex-col gap-2 items-center"
+                    style={{ background: Wa(0.02), border: `1px solid ${Wa(0.06)}` }}>
+                    <p className="t-body-14 text-white/45">No coaching packs yet</p>
+                    <p className="t-caps text-white/28 text-[10px]">
+                      {voiceAiStats?.can_generate
+                        ? 'Click Generate to analyse recent Voice AI performance'
+                        : `${voiceAiStats?.calls_needed ?? 3} more scored call${(voiceAiStats?.calls_needed ?? 3) !== 1 ? 's' : ''} needed before generating`}
+                    </p>
+                  </div>
+                ) : (
+                  <div className="flex flex-col gap-4">
+                    {voiceAiPacks.map(pack => (
+                      <CoachingPackCard key={pack.pack_id} pack={pack} />
+                    ))}
+                  </div>
+                )}
               </div>
             )}
 
@@ -362,6 +386,103 @@ function scoreDisplay(score) {
   if (score >= 80) return { color: Y, glow: Ya(0.4) }
   if (score >= 60) return { color: Wa(0.75), glow: Wa(0.12) }
   return { color: Wa(0.40), glow: 'transparent' }
+}
+
+// ── Voice AI Coaching helpers ─────────────────────────────────────────────────
+
+function VoiceAiStatsRow({ stats, loading }) {
+  if (loading) {
+    return (
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        {[0,1,2,3].map(i => (
+          <div key={i} className="rounded-2xl px-5 py-4 animate-pulse"
+            style={{ background: Wa(0.02), border: `1px solid ${Wa(0.06)}` }}>
+            <div className="h-6 w-10 rounded mb-2" style={{ background: Wa(0.06) }} />
+            <div className="h-3 w-16 rounded" style={{ background: Wa(0.04) }} />
+          </div>
+        ))}
+      </div>
+    )
+  }
+
+  if (!stats) {
+    return (
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        {['Scored Calls', 'Avg Score', 'Resolution', 'Trend (7d)'].map(label => (
+          <div key={label} className="rounded-2xl px-5 py-4"
+            style={{ background: Wa(0.02), border: `1px solid ${Wa(0.06)}` }}>
+            <p className="text-[22px] font-light leading-none mb-1.5" style={{ color: Wa(0.25) }}>—</p>
+            <p className="t-caps text-white/28 text-[10px]">{label}</p>
+          </div>
+        ))}
+      </div>
+    )
+  }
+
+  const trend = stats.trend
+  const TrendIcon = trend === 'improving' ? TrendingUp : trend === 'declining' ? TrendingDown : Minus
+  const trendColor = trend === 'improving' ? Y : trend === 'declining' ? '#fc535b' : Wa(0.45)
+
+  const tiles = [
+    { label: 'Scored Calls',  value: stats.total_scored ?? '—',
+      sub: stats.can_generate ? 'Ready to analyse' : `${stats.calls_needed} more needed`,
+      subColor: stats.can_generate ? Y : Wa(0.35) },
+    { label: 'Avg Score',     value: stats.avg_score != null ? `${stats.avg_score}` : '—',
+      sub: stats.pass_rate != null ? `${Math.round(stats.pass_rate * 100)}% pass rate` : null },
+    { label: 'Resolution',    value: stats.avg_resolution != null ? `${stats.avg_resolution}` : '—',
+      sub: 'avg resolution score' },
+    { label: 'Trend (7d)',    value: stats.avg_score_7d != null ? `${stats.avg_score_7d}` : '—',
+      sub: trend.charAt(0).toUpperCase() + trend.slice(1),
+      subColor: trendColor,
+      icon: <TrendIcon size={12} color={trendColor} /> },
+  ]
+
+  return (
+    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      {tiles.map(({ label, value, sub, subColor, icon }) => (
+        <div key={label} className="rounded-2xl px-5 py-4"
+          style={{ background: Wa(0.025), border: `1px solid ${Wa(0.07)}` }}>
+          <p className="text-[22px] font-light text-white leading-none mb-1.5">{value}</p>
+          <p className="t-caps text-white/42 text-[10px] mb-1">{label}</p>
+          {sub && (
+            <p className="flex items-center gap-1 t-caps text-[10px]" style={{ color: subColor || Wa(0.35) }}>
+              {icon}{sub}
+            </p>
+          )}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function VoiceAiGenerateButton({ stats, generating, error, onGenerate }) {
+  const canGenerate = stats?.can_generate && !generating
+
+  return (
+    <div className="flex flex-col items-end gap-1">
+      <button
+        onClick={onGenerate}
+        disabled={!canGenerate}
+        className="flex items-center gap-2 px-4 py-2 rounded-full text-[12px] font-semibold uppercase tracking-wider transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+        style={{
+          background: canGenerate ? Y : Wa(0.05),
+          color:      canGenerate ? '#000' : Wa(0.38),
+          border:     canGenerate ? 'none' : `1px solid ${Wa(0.10)}`,
+        }}
+        onMouseEnter={e => { if (canGenerate) e.currentTarget.style.opacity = '0.88' }}
+        onMouseLeave={e => { e.currentTarget.style.opacity = '1' }}
+      >
+        {generating ? <Loader size={13} className="animate-spin" /> : <Sparkles size={13} />}
+        {generating ? 'Analysing…' : 'Generate Pack'}
+      </button>
+      {!stats?.can_generate && !generating && (
+        <p className="t-caps text-white/30 text-[10px]">
+          {stats ? `${stats.calls_needed} more scored call${stats.calls_needed !== 1 ? 's' : ''} needed` : 'Loading…'}
+        </p>
+      )}
+      {error && <p className="t-caps text-[10px]" style={{ color: '#fc535b' }}>{error}</p>}
+    </div>
+  )
 }
 
 function EvalRow({ ev, selected, onSelect }) {

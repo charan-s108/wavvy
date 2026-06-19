@@ -6,7 +6,7 @@ import NodeConfigPanel      from './NodeConfigPanel'
 import WorkflowIntentPanel  from './WorkflowIntentPanel'
 import { useWorkflowEditor } from './useWorkflowEditor'
 
-const API = import.meta.env.VITE_BACKEND_HTTP_URL || 'http://localhost:8000'
+const API = import.meta.env.VITE_BACKEND_HTTP_URL || ''
 const Y   = '#f4f73d'
 
 function newWorkflowTemplate() {

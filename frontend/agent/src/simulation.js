@@ -11,11 +11,11 @@
  * Step 2   Investigation Complete — HandoffCard populates: risk, alerts, facts, questions, timeline
  * Step 3   Call Accepted          — agent answers, transcript starts, companion fires
  * Step 4   Customer Asks Q        — nudge = direct answer to ref-number question; quick replies
- * Step 5   Companion Analyzes     — risk flags, 30% resolution, Remove Fraud Hold action
- * Step 6   Customer Asks Docs     — nudge changes to answer "no documents needed"
- * Step 7   Fraud Hold Lifted      — agent approves, executing → completed, live doc updates
- * Step 8   Companion Re-Fires     — mood improving, unlock action, open question resolved
- * Step 9   Account Unlocked       — agent approves, customer confirms card works
+ * Step 5   Companion Analyzes     — risk flags, 30% resolution, Remove Fraud Hold action; agent peeks Manual tab
+ * Step 6   Customer Asks Docs     — nudge answers "no documents needed"; agent back on Companion tab
+ * Step 7   Fraud Hold Lifted      — agent approves companion action → executing → completed; live doc updates
+ * Step 8   Agent → Manual Tab     — companion re-fires with Unlock Account; agent switches to Manual tab
+ * Step 9   Account Unlocked (Manual) — agent fires Unlock Account via Manual Toolkit; toolkit status → ok
  * Step 10  Issue Resolved         — checklist done, satisfied mood, 93% resolution
  * Step 11  ACW Generated          — instant from live documentation
  */
@@ -33,9 +33,9 @@ export const SIM_STEP_LABELS = {
   4:  'Customer Asks: Ref No',
   5:  'Companion Analyzes',
   6:  'Customer Asks: Documents',
-  7:  'Fraud Hold Lifted',
-  8:  'Companion Re-Fires',
-  9:  'Account Unlocked',
+  7:  'Fraud Hold Lifted (Companion)',
+  8:  'Agent → Manual Tab',
+  9:  'Account Unlocked (Manual)',
   10: 'Issue Resolved',
   11: 'ACW Generated',
 }
@@ -302,6 +302,7 @@ export function useSimulation({
   setResolutionProb, setSentimentTrend,
   setRiskFlags, setAcwPreview,
   setCaseInvestigation, setOpenQuestions, setLiveDoc,
+  setRightTab, setToolkitStatuses, setToolkitMessages, setToolkitRefs,
 }) {
   const timers     = useRef([])
   const stepRef    = useRef(-1)
@@ -342,6 +343,10 @@ export function useSimulation({
     setSentimentHistory([]);  setResolutionProb(null); setSentimentTrend('stable')
     setRiskFlags([]);         setAcwPreview(null)
     setCaseInvestigation(null); setOpenQuestions([]); setLiveDoc(null)
+    if (setRightTab)        setRightTab('companion')
+    if (setToolkitStatuses) setToolkitStatuses({})
+    if (setToolkitMessages) setToolkitMessages({})
+    if (setToolkitRefs)     setToolkitRefs({})
   }, [
     setCallerState, setCallId, setCustomer, setHandoff, setVoiceTx, setLiveTx,
     setQuickReplies,
@@ -350,6 +355,7 @@ export function useSimulation({
     setSuggestedActions, setActionStatuses, setActivityTimeline, setSentimentHistory,
     setResolutionProb, setSentimentTrend, setRiskFlags, setAcwPreview,
     setCaseInvestigation, setOpenQuestions, setLiveDoc,
+    setRightTab, setToolkitStatuses, setToolkitMessages, setToolkitRefs,
   ])
 
   const runSimulation = useCallback(() => {
@@ -435,7 +441,7 @@ export function useSimulation({
         })
         break
 
-      /* ── 5: Companion full analysis — risk flags, action card suggested ── */
+      /* ── 5: Companion full analysis — risk flags, action card; agent peeks Manual tab ── */
       case 5:
         setChecklist(CHECKLIST_STEP5)
         addTx([{ speaker: 'agent', text: TX_STEP5_AGENT }], 0)
@@ -451,6 +457,11 @@ export function useSimulation({
           setQuickReplies([])
           addEvent('action_suggested', 'remove_fraud_hold', 'AI suggested: Remove Fraud Hold — FC-0291')
         })
+        // Agent peeks at the Manual tab to orient themselves, then confirms companion action is right
+        if (setRightTab) {
+          after(1200, () => setRightTab('toolkit'))
+          after(3800, () => setRightTab('companion'))
+        }
         break
 
       /* ── 6: Customer asks about documents — nudge changes to answer directly ── */
@@ -483,7 +494,7 @@ export function useSimulation({
         })
         break
 
-      /* ── 8: Companion re-fires — mood improving, unlock action, open question resolves ── */
+      /* ── 8: Companion re-fires — agent switches to Manual tab to do unlock directly ── */
       case 8:
         setChecklist(CHECKLIST_STEP8)
         setKbSuggestion(null)
@@ -497,7 +508,7 @@ export function useSimulation({
         setOpenQuestions([DEMO_CASE_COMPLETE.open_questions[1]])
         after(400, () => {
           setSuggestedActions([ACTION_UNLOCK_ACCOUNT])
-          setNudge('Unlock the account now — that\'s the final step. Kavya\'s salary will be accessible the moment this completes.')
+          setNudge('Unlock the account — that\'s the final step. Use the Manual tab to fire it directly, or approve the AI suggestion above.')
           setQuickReplies([
             'The hold is off. I\'m unlocking your account now — you should have full access including your salary within 60 seconds.',
             'Card, UPI, and transfers will all be re-enabled immediately once I confirm the unlock.',
@@ -505,21 +516,29 @@ export function useSimulation({
           addTx(TX_STEP8, 0)
           addEvent('action_suggested', 'unlock_account', 'AI suggested: Unlock Account')
         })
+        // Agent decides to use Manual tab directly instead of approving companion action
+        if (setRightTab) after(1000, () => setRightTab('toolkit'))
         break
 
-      /* ── 9: Agent approves Unlock Account — customer confirms card works ── */
+      /* ── 9: Agent fires Unlock Account via Manual Toolkit ── */
       case 9:
         setQuickReplies([])
+        // Agent clicks in the Manual tab — toolkit shows running → ok
         after(300, () => {
-          setActionStatuses(prev => ({ ...prev, unlock_account: 'executing' }))
-          addEvent('action_approved', 'unlock_account', 'Agent approved: Unlock Account')
+          if (setToolkitStatuses) setToolkitStatuses(prev => ({ ...prev, unlock_account: 'running' }))
+          if (setToolkitMessages) setToolkitMessages(prev => ({ ...prev, unlock_account: 'Unlocking account...' }))
+          addEvent('action_approved', 'unlock_account', 'Manual Toolkit: Agent fired Unlock Account directly')
         })
-        after(1700, () => {
-          setActionStatuses(prev => ({ ...prev, unlock_account: 'completed' }))
-          addEvent('action_executed', 'unlock_account', 'Account unlocked — full access restored.')
+        after(1800, () => {
+          if (setToolkitStatuses) setToolkitStatuses(prev => ({ ...prev, unlock_account: 'ok' }))
+          if (setToolkitMessages) setToolkitMessages(prev => ({ ...prev, unlock_account: 'Account unlocked — full access restored.' }))
+          if (setToolkitRefs)     setToolkitRefs(prev => ({ ...prev, unlock_account: { res_number: 'RES-2026-0522' } }))
+          addEvent('action_executed', 'unlock_account', 'Manual: Account unlocked — full access restored.')
           setLiveDoc(LIVE_DOC_FINAL)
+          // Switch back to Companion tab after action completes
+          if (setRightTab) setRightTab('companion')
         })
-        addTx(TX_STEP9, 2100)
+        addTx(TX_STEP9, 2200)
         break
 
       /* ── 10: Issue fully resolved — checklist done, satisfied mood ── */
@@ -564,6 +583,7 @@ export function useSimulation({
     setSuggestedActions, setActionStatuses, setActivityTimeline, setSentimentHistory,
     setResolutionProb, setSentimentTrend, setRiskFlags, setAcwPreview,
     setCaseInvestigation, setOpenQuestions, setLiveDoc,
+    setRightTab, setToolkitStatuses, setToolkitMessages, setToolkitRefs,
   ])
 
   return {

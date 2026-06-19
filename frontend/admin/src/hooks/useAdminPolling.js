@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 
-const API = import.meta.env.VITE_BACKEND_HTTP_URL || 'http://localhost:8000'
+const API = import.meta.env.VITE_BACKEND_HTTP_URL || ''
 
 export function useAdminPolling(intervalMs = 5000) {
   const [liveCalls, setLiveCalls] = useState([])

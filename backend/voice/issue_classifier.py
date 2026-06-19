@@ -49,6 +49,18 @@ _PATTERNS: list[tuple[IssueType, list[str], float]] = [
     ], 0.95),
     (IssueType.KYC_HOLD, ["kyc", "verification hold"], 0.80),
 
+    # ── Fraud Hold Removal — MUST come before generic FRAUD patterns (higher priority) ──
+    # Customer already has a fraud hold and wants it lifted — route to Account Unlock
+    (IssueType.ACCOUNT_LOCKED, [
+        "fraud hold", "fraud investigation hold", "fraud hold on my account",
+        "account is hold for fraud", "account is on hold for fraud",
+        "my account is hold for a fraud", "account held for fraud",
+        "held for fraud investigation", "account under fraud hold",
+        "remove fraud hold", "lift fraud hold", "clear fraud hold",
+        "held due to fraud", "held because of fraud",
+        "fraud is on hold", "account has a fraud hold",
+    ], 0.95),
+
     # ── Fraud ─────────────────────────────────────────────────────────────────
     (IssueType.FRAUD, [
         "unauthorized transaction", "someone used my account", "i didn't make",
@@ -77,6 +89,9 @@ _PATTERNS: list[tuple[IssueType, list[str], float]] = [
         "amount was deducted", "amount got deducted", "money got deducted",
         "deducted from my account", "deducted but", "got debited",
         "debited but not", "debited and failed",
+        # Colloquial: "money got deducted and it got failed"
+        "deducted and got failed", "deducted and it failed",
+        "got failed and money", "failed and money deducted",
     ], 0.95),
     (IssueType.REFUND, ["refund", "reimburs"], 0.75),
 
@@ -95,8 +110,13 @@ _PATTERNS: list[tuple[IssueType, list[str], float]] = [
         "where is my money", "money not received", "payment stuck",
         "transfer stuck", "transaction stuck",
     ], 0.90),
-    (IssueType.TRANSACTION_STATUS, ["transaction failed", "payment failed", "transfer failed"], 0.80),
-    (IssueType.TRANSACTION_STATUS, ["transaction", "payment"], 0.55),
+    (IssueType.TRANSACTION_STATUS, [
+        "transaction failed", "payment failed", "transfer failed",
+        # Colloquial Indian English: "it got failed", "transaction got failed"
+        "got failed", "it failed", "transaction got failed",
+        "payment got failed", "transfer got failed",
+    ], 0.80),
+    (IssueType.TRANSACTION_STATUS, ["transaction", "payment"], 0.65),
 
     # ── General (lowest priority catch-all) ───────────────────────────────────
     (IssueType.GENERAL_SUPPORT, [
@@ -215,6 +235,33 @@ _COMPILED_CLOSURE_PHRASES: list[re.Pattern] = [
     for phrase in _UNIVERSAL_CLOSURE_PHRASES
 ]
 
+# Negation words — used to suppress single-word keyword matches that appear in
+# a negated context ("no fraud", "I don't see any fraud", "there is no fraud").
+# Only applied to single-word keywords (no spaces) — multi-word intent phrases
+# like "I didn't make this transaction" are inherently intentional and unambiguous.
+_NEGATION_WORDS: frozenset[str] = frozenset([
+    "no", "not", "never", "none", "without",
+    "don't", "dont", "doesn't", "doesnt", "didn't", "didnt",
+    "isn't", "isnt", "wasn't", "wasnt", "weren't", "werent",
+    "haven't", "havent", "hasn't", "hasnt", "hadn't", "hadnt",
+    "won't", "wont", "wouldn't", "wouldnt", "can't", "cant", "couldn't", "couldnt",
+])
+
+_STRIP_PUNCT = re.compile(r"[^\w']+")
+
+
+def _is_single_keyword_negated(lower: str, keyword: str) -> bool:
+    """Return True if `keyword` (no spaces) appears within 8 words of a negation."""
+    if ' ' in keyword:
+        return False  # phrase keywords are intentional — skip negation check
+    kw_re = re.compile(r'\b' + re.escape(keyword) + r'\b')
+    for m in kw_re.finditer(lower):
+        prefix = lower[max(0, m.start() - 60):m.start()]
+        preceding = [_STRIP_PUNCT.sub('', w) for w in prefix.split()[-8:]]
+        if any(w in _NEGATION_WORDS for w in preceding):
+            return True
+    return False
+
 
 def _is_completion_context(lower: str, issue_type: IssueType) -> bool:
     """Return True if the utterance describes a resolved outcome, not a new request."""
@@ -245,6 +292,17 @@ def classify_issue(text: str) -> IssueClassification | None:
         matched = [kw for kw, pattern in kw_patterns if pattern.search(lower)]
         if not matched:
             continue
+        # Remove single-word keywords that appear in a negated context.
+        # "I don't see any fraud" / "there is no fraud" → suppress "fraud" match.
+        # Multi-word phrases (e.g. "i didn't make this") are kept — they encode intent.
+        active = [kw for kw in matched if not _is_single_keyword_negated(lower, kw)]
+        if not active:
+            logger.debug(
+                "issue_classifier: suppressed %s — all keywords negated in: %r",
+                issue_type.value, text[:80],
+            )
+            continue
+        matched = active
         if best is None or confidence > best[1]:
             best = (issue_type, confidence, matched)
 

@@ -1,3 +1,4 @@
+import { useState, useEffect } from 'react'
 import { Phone, Loader } from 'lucide-react'
 
 const Y  = '#f4f73d'
@@ -36,6 +37,13 @@ function elapsed(started) {
 }
 
 export default function LiveCallsTable({ liveCalls, loading }) {
+  const [, setTick] = useState(0)
+  useEffect(() => {
+    if (!liveCalls?.length) return
+    const id = setInterval(() => setTick(t => t + 1), 1000)
+    return () => clearInterval(id)
+  }, [liveCalls?.length])
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-16 gap-3">

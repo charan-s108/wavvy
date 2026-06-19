@@ -54,31 +54,6 @@ def _normalize_email(raw: str) -> str:
     return v.lower().strip()
 
 
-def _name_is_confirmed(name: str, history: list) -> bool:
-    name_l = name.lower().strip()
-    if not name_l or len(name_l) < 2:
-        return False
-    for i, msg in enumerate(history):
-        if msg.get("role") != "user":
-            continue
-        if name_l not in msg.get("content", "").lower():
-            continue
-        for j in range(i - 1, -1, -1):
-            prev = history[j]
-            if prev.get("role") == "assistant":
-                if "name" in prev.get("content", "").lower():
-                    return True
-                break
-    return False
-
-
-def _ai_asked_for_name(history: list) -> bool:
-    return any(
-        "name" in m.get("content", "").lower()
-        for m in history
-        if m.get("role") == "assistant"
-    )
-
 
 _PHONE_WORD_MAP = {
     'zero': '0', 'oh': '0',
@@ -170,114 +145,6 @@ def make_agent_tools(call_id: str, session, publish_event) -> list:
     from workflow.engine import WorkflowRunner
     runner = WorkflowRunner(session)
 
-    # ── capture_lead ─────────────────────────────────────────────────────────
-    if "capture_lead" in enabled:
-        @function_tool
-        async def capture_lead(
-            name: str,
-            email: str,
-            company: str | None = None,
-            intent: str = "general_inquiry",
-        ) -> str:
-            """Save visitor name and email."""
-            if session.confirmed_name:
-                name = session.confirmed_name
-            if session.confirmed_email:
-                email = session.confirmed_email
-
-            if _is_placeholder(name):
-                return "I need the visitor's real name. Please ask them: 'What's your name?'"
-
-            if not session.confirmed_name and not _name_is_confirmed(name, session.conversation_history):
-                return "Please ask the visitor their name first: 'What's your name?'"
-
-            email = _normalize_email(email)
-            if _is_placeholder(email) or not _is_valid_email(email):
-                return "I need a real email address with @. Please ask the visitor for their email."
-
-            result = await execute_with_recovery(
-                tool_name="capture_lead",
-                args={"name": name, "email": email, "company": company or "",
-                      "intent": intent, "call_id": call_id},
-                call_id=call_id,
-                turn_id=session.turn_count,
-                step_id="capture_lead",
-                session=session,
-            )
-            if result.success and result.data.get("lead_id"):
-                session.lead_id = result.data["lead_id"]
-                session.confirmed_name = name
-                session.confirmed_email = email
-
-            asyncio.create_task(publish_event({
-                "type": "tool_call", "tool": "capture_lead",
-                "status": "done", "result": {"success": result.success},
-            }))
-            return "Contact info saved." if result.success else "Unable to save info right now."
-
-        tools.append(capture_lead)
-
-    # ── schedule_demo ─────────────────────────────────────────────────────────
-    if "schedule_demo" in enabled:
-        @function_tool
-        async def schedule_demo(
-            name: str,
-            email: str,
-            preferred_time: str,
-            confirm_pending: bool = False,
-        ) -> str:
-            """Book a Wavvy demo. preferred_time: specific day + hour e.g. 'Thursday 2pm'. Set confirm_pending=True only when visitor says yes to a suggested alternative slot."""
-            effective_name  = session.confirmed_name  or name
-            effective_email = session.confirmed_email or email
-
-            if _is_placeholder(effective_name):
-                return "I need the visitor's real name before booking. Ask them: 'What's your name?'"
-
-            if not session.confirmed_name and not _name_is_confirmed(effective_name, session.conversation_history):
-                return "Please ask the visitor their name first: 'What's your name?'"
-
-            effective_email = _normalize_email(effective_email)
-            if _is_placeholder(effective_email) or not _is_valid_email(effective_email):
-                return "I need a real email address before booking. Ask the visitor: 'What's your email address?'"
-
-            if not confirm_pending and _is_placeholder(preferred_time):
-                return "I need a specific time before booking. Ask: 'We're available Monday to Friday, 9am to 5pm IST. What day and time works for you?'"
-
-            args = {
-                "name": effective_name, "email": effective_email,
-                "preferred_time": preferred_time, "lead_id": session.lead_id,
-                "call_id": call_id, "user_timezone": "Asia/Kolkata",
-            }
-            if confirm_pending and session.pending_slot:
-                args["force_slot"] = session.pending_slot
-                session.pending_slot = None
-            else:
-                session.pending_slot = None
-
-            result = await execute_with_recovery(
-                tool_name="schedule_demo", args=args, call_id=call_id,
-                turn_id=session.turn_count, step_id="schedule_demo", session=session,
-            )
-            asyncio.create_task(publish_event({
-                "type": "tool_call", "tool": "schedule_demo",
-                "status": "done", "result": result.data,
-            }))
-
-            if result.data.get("needs_clarification"):
-                return "That time isn't specific enough. Ask: 'We're available Monday to Friday, 9am to 5pm IST. What day and time works for you?'"
-            if result.data.get("needs_confirmation"):
-                session.pending_slot = result.data.get("pending_slot")
-                tv = result.template_vars or {}
-                slot_short = tv.get("slot_label") or preferred_time
-                return f"That slot is taken. The next available time is {slot_short}. Does that work for you?"
-            if result.success:
-                tv = result.template_vars or {}
-                slot = tv.get("slot_label") or preferred_time
-                return f"Demo booked for {slot}. Confirmation sent to {effective_email}."
-            return "Unable to schedule that slot. Would you like to try a different time?"
-
-        tools.append(schedule_demo)
-
     # ── verify_account ────────────────────────────────────────────────────────
     if "verify_account" in enabled:
         @function_tool
@@ -307,7 +174,6 @@ def make_agent_tools(call_id: str, session, publish_event) -> list:
             if result.get("success"):
                 name = result.get("first_name", "there")
                 acct = result.get("account_type", "standard")
-                session.confirmed_name = name
                 # Build digit-by-digit speech for number readback (e.g. "9 8 1 2 3 4 5 6 0 1")
                 digit_speech = " ".join(digits_only) if digits_only else ""
                 profile = getattr(session, "customer_profile", {}) or {}
@@ -826,12 +692,6 @@ def make_agent_tools(call_id: str, session, publish_event) -> list:
         if session.escalated:
             return "Already transferring to a human agent."
 
-        # For Fin (verify_account flow): no name required before escalation.
-        # For Wavvy (capture_lead flow): require name first.
-        if "capture_lead" in enabled:
-            if not session.confirmed_name and not _ai_asked_for_name(session.conversation_history):
-                return "Please ask the visitor their name first before transferring: 'What's your name?'"
-
         async def _check_availability() -> dict:
             try:
                 async with httpx.AsyncClient(timeout=3.0) as _c:
@@ -876,7 +736,7 @@ def make_agent_tools(call_id: str, session, publish_event) -> list:
 
         result = await execute_with_recovery(
             tool_name="escalate_to_human",
-            args={"reason": reason, "transcript_summary": summary, "call_id": call_id},
+            args={"reason": reason, "lead_summary": summary, "call_id": call_id},
             call_id=call_id,
             turn_id=session.turn_count,
             step_id="escalate",

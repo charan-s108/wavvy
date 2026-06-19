@@ -325,6 +325,9 @@ async def entrypoint(ctx: JobContext) -> None:
                 # starts speculatively and TTS begins streaming before the assistant
                 # guard can fire. Escalated = Fin is deaf and mute.
                 agent_session.interrupt()
+            elif getattr(session, '_esc_task_pending', False):
+                # Escalation deferred task is in-flight — same guard as above
+                agent_session.interrupt()
 
     # ── Event: conversation item added (user or agent turn) ──────────────
     @agent_session.on("conversation_item_added")
@@ -348,7 +351,7 @@ async def entrypoint(ctx: JobContext) -> None:
             session.turn_state = TurnState.ASSISTANT_SPEAKING
             # Restart silence timer — fires if user goes quiet after agent speaks
             silence_timer.start()
-            # (e.g. "<function=schedule_demo>...</function>") before displaying
+            # Strip any raw function-call fragments before displaying
             clean_text = re.sub(r'<function[^>]*>.*?(?:</function>|<function>)', '', text, flags=re.DOTALL).strip()
             asyncio.create_task(publish_event({
                 "type": "agent_done",
@@ -365,7 +368,7 @@ async def entrypoint(ctx: JobContext) -> None:
             # on_user_transcribed already called interrupt() but on_item_added fires in
             # the same async cycle — calling it again ensures preemptive generation is
             # fully cancelled before any new LLM call can be enqueued.
-            if session.escalated or session.human_joined:
+            if session.escalated or session.human_joined or getattr(session, '_esc_task_pending', False):
                 agent_session.interrupt()
                 return
             session.turn_state = TurnState.USER_SPEAKING
@@ -538,7 +541,7 @@ async def entrypoint(ctx: JobContext) -> None:
         is_esc_room = room_name.startswith("esc-")
         if not is_esc_room:
             from routers.livekit_router import _persist_call_end
-            await _persist_call_end(call_id, session.conversation_history)
+            await _persist_call_end(call_id, session.conversation_history, session)
         remove_session(call_id)
 
         # Notify FastAPI to broadcast call_ended + trigger QA scoring (main room only)

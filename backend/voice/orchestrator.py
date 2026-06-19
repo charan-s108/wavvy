@@ -38,11 +38,7 @@ logger = logging.getLogger(__name__)
 # escalate_to_human is intentionally absent — the LLM must never self-initiate
 # escalation.  It is only offered once the customer has explicitly requested it
 # AND confirmed (mode = ESCALATION, handled separately in _process).
-GENERAL_MODE_TOOLS: frozenset[str] = frozenset([
-    "capture_lead",
-    "schedule_demo",
-    "cancel_demo",
-])
+GENERAL_MODE_TOOLS: frozenset[str] = frozenset()
 
 # Escalation keywords — first occurrence triggers a confirmation ask; second confirms.
 # Includes role names (specialist, manager, supervisor) and "connect to/with" phrasing.

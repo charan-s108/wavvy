@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { Layers, Grid2X2, HelpCircle, Loader } from 'lucide-react'
 import ChunkSimilarityMap from './ChunkSimilarityMap.jsx'
 
-const API = import.meta.env.VITE_BACKEND_HTTP_URL || 'http://localhost:8000'
+const API = import.meta.env.VITE_BACKEND_HTTP_URL || ''
 
 const Y  = '#f4f73d'
 const Ya = (a) => `rgba(244,247,61,${a})`

@@ -1,4 +1,5 @@
-import { CheckCircle2, AlertCircle, ArrowRight, TrendingUp, TrendingDown, Minus } from 'lucide-react'
+import { useState } from 'react'
+import { CheckCircle2, AlertCircle, TrendingUp, TrendingDown, Minus, ChevronDown, ChevronRight } from 'lucide-react'
 
 const Y  = '#f4f73d'
 const Ya = (a) => `rgba(244,247,61,${a})`
@@ -12,9 +13,9 @@ function trendColor(t) {
 
 function TrendIcon({ trend }) {
   const color = trendColor(trend)
-  if (trend === 'improving') return <TrendingUp  size={14} color={color} />
-  if (trend === 'declining') return <TrendingDown size={14} color={color} />
-  return <Minus size={14} color={color} />
+  if (trend === 'improving') return <TrendingUp  size={13} color={color} />
+  if (trend === 'declining') return <TrendingDown size={13} color={color} />
+  return <Minus size={13} color={color} />
 }
 
 function priorityStyle(p) {
@@ -24,10 +25,11 @@ function priorityStyle(p) {
 }
 
 export default function CoachingPackCard({ pack }) {
+  const [open, setOpen] = useState(false)
   if (!pack) return null
 
-  const { overall_trend, strengths, improvements, action_items, score_summary, coaching_note, agent_name, generated_at } = pack
-  const s = score_summary || {}
+  const { overall_trend, strengths, improvements, action_items, score_summary, coaching_note, generated_at } = pack
+  const s  = score_summary || {}
   const tc = trendColor(overall_trend)
 
   return (
@@ -35,122 +37,138 @@ export default function CoachingPackCard({ pack }) {
       className="rounded-2xl overflow-hidden"
       style={{ background: Wa(0.025), border: `1px solid ${Wa(0.07)}` }}
     >
-      {/* Header */}
-      <div
-        className="flex items-center justify-between px-6 py-4"
-        style={{ borderBottom: `1px solid ${Wa(0.06)}` }}
+      {/* Clickable header — always visible */}
+      <button
+        className="w-full flex items-center justify-between px-6 py-4 text-left"
+        style={{ borderBottom: open ? `1px solid ${Wa(0.06)}` : 'none' }}
+        onClick={() => setOpen(v => !v)}
       >
-        <div>
-          <p className="text-[14px] font-medium text-white">{agent_name}</p>
-          <p className="t-caps text-white/42 mt-0.5 text-[10px]">
-            {generated_at
-              ? new Date(generated_at).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' })
-              : ''}
-            {' · '}{s.calls_analyzed || 0} calls analyzed
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <TrendIcon trend={overall_trend} />
-          <span className="text-[13px] font-medium" style={{ color: tc }}>
-            {overall_trend ? overall_trend.charAt(0).toUpperCase() + overall_trend.slice(1) : '—'}
+        <div className="flex items-center gap-3 min-w-0">
+          <span style={{ color: Wa(0.35), flexShrink: 0 }}>
+            {open ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
           </span>
-        </div>
-      </div>
-
-      {/* Score row */}
-      <div
-        className="grid grid-cols-4 px-6 py-4 gap-4"
-        style={{ borderBottom: `1px solid ${Wa(0.06)}` }}
-      >
-        {[
-          { label: 'Avg Score',   value: s.avg_overall },
-          { label: 'Resolution',  value: s.avg_resolution },
-          { label: 'Pass Rate',   value: s.pass_rate != null ? `${Math.round(s.pass_rate * 100)}%` : '—' },
-          { label: 'Satisfaction', value: s.avg_satisfaction != null ? `${Math.round(s.avg_satisfaction * 100)}%` : '—' },
-        ].map(({ label, value }) => (
-          <div key={label} className="text-center">
-            <p className="text-[16px] font-light text-white">{value ?? '—'}</p>
-            <p className="t-caps text-white/42 text-[10px] mt-0.5">{label}</p>
-          </div>
-        ))}
-      </div>
-
-      <div className="px-6 py-5 flex flex-col gap-5">
-        {/* Strengths */}
-        {strengths?.length > 0 && (
-          <div>
-            <p className="section-label text-[10px] mb-3">Strengths</p>
-            <div className="flex flex-col gap-2">
-              {strengths.map((s, i) => (
-                <div key={i} className="flex items-start gap-3">
-                  <CheckCircle2 size={13} color={Y} className="flex-shrink-0 mt-0.5" />
-                  <p className="text-[12px] text-white/65 leading-relaxed">{s}</p>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Improvements */}
-        {improvements?.length > 0 && (
-          <div>
-            <p className="section-label text-[10px] mb-3">Areas to Improve</p>
-            <div className="flex flex-col gap-2">
-              {improvements.map((imp, i) => (
-                <div key={i} className="flex items-start gap-3">
-                  <AlertCircle size={13} color={Wa(0.48)} className="flex-shrink-0 mt-0.5" />
-                  <p className="text-[12px] text-white/65 leading-relaxed">{imp}</p>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Action items */}
-        {action_items?.length > 0 && (
-          <div>
-            <p className="section-label text-[10px] mb-3">Action Items</p>
-            <div className="flex flex-col gap-2">
-              {action_items.map((item, i) => {
-                const ps = priorityStyle(item.priority)
-                return (
-                  <div
-                    key={i}
-                    className="flex items-start gap-3 rounded-xl px-4 py-3"
-                    style={{ background: Wa(0.025), border: `1px solid ${Wa(0.07)}` }}
-                  >
-                    <span
-                      className="t-caps px-1.5 py-0.5 rounded flex-shrink-0 mt-0.5 text-[10px]"
-                      style={{ color: ps.color, background: ps.bg, border: `1px solid ${ps.border}` }}
-                    >
-                      {item.priority}
-                    </span>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-[12px] text-white/75 leading-relaxed">{item.action}</p>
-                      {item.metric && (
-                        <p className="t-caps text-white/38 text-[10px] mt-1">Target: {item.metric}</p>
-                      )}
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
-          </div>
-        )}
-
-        {/* Coaching note */}
-        {coaching_note && (
-          <div
-            className="rounded-xl p-4"
-            style={{ background: Ya(0.04), border: `1px solid ${Ya(0.14)}` }}
-          >
-            <p className="t-caps text-[10px] mb-2 flex items-center gap-1.5" style={{ color: Y }}>
-              ✦ Coaching Note
+          <div className="min-w-0">
+            <p className="text-[14px] font-medium text-white">Voice AI Performance Analysis</p>
+            <p className="t-caps text-white/42 mt-0.5 text-[10px]">
+              {generated_at
+                ? new Date(generated_at).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' })
+                : ''}
+              {' · '}{s.calls_analyzed || 0} calls analysed
             </p>
-            <p className="text-[12px] text-white/65 leading-relaxed">{coaching_note}</p>
           </div>
-        )}
-      </div>
+        </div>
+
+        {/* Summary chips — visible in collapsed state */}
+        <div className="flex items-center gap-3 flex-shrink-0 ml-4">
+          {s.avg_overall != null && (
+            <span className="text-[13px] font-light text-white/70">{s.avg_overall} avg</span>
+          )}
+          <div className="flex items-center gap-1.5">
+            <TrendIcon trend={overall_trend} />
+            <span className="text-[12px] font-medium" style={{ color: tc }}>
+              {overall_trend ? overall_trend.charAt(0).toUpperCase() + overall_trend.slice(1) : '—'}
+            </span>
+          </div>
+        </div>
+      </button>
+
+      {/* Expandable body */}
+      {open && (
+        <>
+          {/* Score row */}
+          <div
+            className="grid grid-cols-4 px-6 py-4 gap-4"
+            style={{ borderBottom: `1px solid ${Wa(0.06)}` }}
+          >
+            {[
+              { label: 'Avg Score',    value: s.avg_overall },
+              { label: 'Resolution',   value: s.avg_resolution },
+              { label: 'Pass Rate',    value: s.pass_rate    != null ? `${Math.round(s.pass_rate    * 100)}%` : '—' },
+              { label: 'Satisfaction', value: s.avg_satisfaction != null ? `${Math.round(s.avg_satisfaction * 100)}%` : '—' },
+            ].map(({ label, value }) => (
+              <div key={label} className="text-center">
+                <p className="text-[16px] font-light text-white">{value ?? '—'}</p>
+                <p className="t-caps text-white/42 text-[10px] mt-0.5">{label}</p>
+              </div>
+            ))}
+          </div>
+
+          <div className="px-6 py-5 flex flex-col gap-5">
+            {/* Strengths */}
+            {strengths?.length > 0 && (
+              <div>
+                <p className="section-label text-[10px] mb-3">Strengths</p>
+                <div className="flex flex-col gap-2">
+                  {strengths.map((str, i) => (
+                    <div key={i} className="flex items-start gap-3">
+                      <CheckCircle2 size={13} color={Y} className="flex-shrink-0 mt-0.5" />
+                      <p className="text-[12px] text-white/65 leading-relaxed">{str}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Failure patterns */}
+            {improvements?.length > 0 && (
+              <div>
+                <p className="section-label text-[10px] mb-3">Failure Patterns</p>
+                <div className="flex flex-col gap-2">
+                  {improvements.map((imp, i) => (
+                    <div key={i} className="flex items-start gap-3">
+                      <AlertCircle size={13} color={Wa(0.48)} className="flex-shrink-0 mt-0.5" />
+                      <p className="text-[12px] text-white/65 leading-relaxed">{imp}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Optimization steps */}
+            {action_items?.length > 0 && (
+              <div>
+                <p className="section-label text-[10px] mb-3">Optimization Steps</p>
+                <div className="flex flex-col gap-2">
+                  {action_items.map((item, i) => {
+                    const ps = priorityStyle(item.priority)
+                    return (
+                      <div
+                        key={i}
+                        className="flex items-start gap-3 rounded-xl px-4 py-3"
+                        style={{ background: Wa(0.025), border: `1px solid ${Wa(0.07)}` }}
+                      >
+                        <span
+                          className="t-caps px-1.5 py-0.5 rounded flex-shrink-0 mt-0.5 text-[10px]"
+                          style={{ color: ps.color, background: ps.bg, border: `1px solid ${ps.border}` }}
+                        >
+                          {item.priority}
+                        </span>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-[12px] text-white/75 leading-relaxed">{item.action}</p>
+                          {item.metric && (
+                            <p className="t-caps text-white/38 text-[10px] mt-1">Target: {item.metric}</p>
+                          )}
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Analysis note */}
+            {coaching_note && (
+              <div
+                className="rounded-xl p-4"
+                style={{ background: Ya(0.04), border: `1px solid ${Ya(0.14)}` }}
+              >
+                <p className="t-caps text-[10px] mb-2" style={{ color: Y }}>✦ Analysis</p>
+                <p className="text-[12px] text-white/65 leading-relaxed">{coaching_note}</p>
+              </div>
+            )}
+          </div>
+        </>
+      )}
     </div>
   )
 }

@@ -44,9 +44,6 @@ class ToolResult:
 # ── Per-tool retry policies ───────────────────────────────────────────────────
 
 RETRY_POLICY: dict[str, int] = {
-    "capture_lead":       2,   # idempotent write — safe to retry
-    "schedule_demo":      1,   # write — single retry (slot_key UNIQUE prevents double-book)
-    "cancel_demo":        1,   # idempotent — cancelling an already-cancelled appt is safe
     "escalate_to_human":  1,   # idempotent — single retry
     "default":            1,
 }
@@ -54,9 +51,6 @@ RETRY_POLICY: dict[str, int] = {
 # ── Per-tool timeout budgets (seconds) ────────────────────────────────────────
 
 TOOL_TIMEOUTS: dict[str, float] = {
-    "capture_lead":       2.0,
-    "schedule_demo":      6.0,   # dateparser + DB conflict check + optional email
-    "cancel_demo":        3.0,
     "escalate_to_human":  3.0,
     "default":            2.0,
 }
@@ -197,7 +191,7 @@ async def execute_with_recovery(
     return ToolResult(
         success=False,
         fast_response_key="tool_error",
-        should_escalate=(tool_name in ("schedule_demo",)),
+        should_escalate=False,
         error_type=last_error,
         turn_id=turn_id,
     )

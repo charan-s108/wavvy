@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Plus, Zap, ZapOff } from 'lucide-react'
 
-const API = import.meta.env.VITE_BACKEND_HTTP_URL || 'http://localhost:8000'
+const API = import.meta.env.VITE_BACKEND_HTTP_URL || ''
 const Y   = '#f4f73d'
 
 export default function WorkflowList({ activeId, onSelect, onNew }) {

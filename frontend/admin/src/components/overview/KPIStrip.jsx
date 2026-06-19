@@ -11,6 +11,18 @@ const KPI_DEFS = [
   { key: 'containment_rate', label: 'Containment',   suffix: '%',    featured: false },
 ]
 
+function formatValue(key, value, suffix) {
+  if (value == null) return '—'
+  if (key === 'avg_duration') {
+    if (!value || value === 0) return '—'
+    const m = Math.floor(value / 60)
+    const s = value % 60
+    if (m === 0) return `${s}s`
+    return s > 0 ? `${m}m ${s}s` : `${m}m`
+  }
+  return `${value}${suffix}`
+}
+
 export default function KPIStrip({ kpis }) {
   return (
     <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
@@ -30,7 +42,7 @@ export default function KPIStrip({ kpis }) {
               className="font-light tracking-tight leading-none"
               style={{ fontSize: featured ? 32 : 26, color: featured ? Y : '#fff' }}
             >
-              {value != null ? `${value}${suffix}` : '—'}
+              {formatValue(key, value, suffix)}
             </p>
           </div>
         )

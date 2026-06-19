@@ -1,6 +1,6 @@
 import asyncio
 import json
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timezone, timedelta
 
 import bcrypt
 from sqlalchemy import select, func, text
@@ -45,8 +45,8 @@ SEED_CUSTOMERS = [
         "kyc_status": "verified",
         "fraud_hold_active": False,
         "transactions": [
-            {"txn_number": "TXN-6540", "merchant": "Amazon", "amount": 1890,
-             "txn_type": "refund", "status": "refund_initiated", "txn_date": "2026-05-22"},
+            {"txn_number": "TXN-6540", "merchant": "IRCTC", "amount": 1890,
+             "txn_type": "debit", "status": "processing", "txn_date": "2026-06-18"},
         ],
     },
     {
@@ -71,8 +71,8 @@ SEED_CUSTOMERS = [
         "kyc_status": "verified",
         "fraud_hold_active": True,
         "transactions": [
-            {"txn_number": "TXN-9901", "merchant": "Unknown Vendor", "amount": 18000,
-             "txn_type": "debit", "status": "flagged", "txn_date": "2026-05-25"},
+            {"txn_number": "TXN-9901", "merchant": "Unknown Overseas Vendor", "amount": 18000,
+             "txn_type": "debit", "status": "completed", "txn_date": "2026-06-17"},
         ],
     },
     {
@@ -113,8 +113,8 @@ SEED_CUSTOMERS = [
         "kyc_status": "verified",
         "fraud_hold_active": False,
         "transactions": [
-            {"txn_number": "TXN-2200", "merchant": "Myntra", "amount": 3200,
-             "txn_type": "debit", "status": "refund_initiated", "txn_date": "2026-05-23"},
+            {"txn_number": "TXN-2200", "merchant": "Razorpay Subscription", "amount": 3200,
+             "txn_type": "debit", "status": "completed", "txn_date": "2026-06-15"},
         ],
     },
     {
@@ -186,11 +186,7 @@ MEMORY RULE: Once a visitor gives their name or email in this conversation, stor
 
 TOOLS — only call with real values the visitor spoke, never placeholders:
 
-escalate_to_human — collect ONLY what isn't already known, then act:
-  1. Name — ask ONLY if not yet given this call.
-  2. Email — ask ONLY if not yet given this call.
-  3. Call escalate_to_human.
-  NEVER call escalate_to_human before capture_lead if capture_lead is enabled.
+escalate_to_human — call when the visitor explicitly requests a human.
 
 cancel_escalation — ONLY when visitor explicitly says one of: "never mind", "go back to the AI", "stay with you", "cancel", "I changed my mind" — BEFORE escalation completes.
   CRITICAL: After escalate_to_human is called, do NOT reply to any visitor speech. Wait silently.
@@ -276,21 +272,27 @@ TRANSCRIPT:"""
     ),
 
     "coaching_prompt": (
-        """You are Wavvy's AI coaching specialist for Wavvy demo agents.
+        """You are a Voice AI performance analyst for Wavvy.
+You will receive a list of completed call evaluations for the Wavvy Voice AI.
+Generate an optimization coaching pack that helps the product team improve the Voice AI's performance.
+
+Be specific — identify recurring patterns: low-scoring rubric areas, common violations, escalation triggers, KB gaps.
+Output actionable recommendations: prompt tuning, workflow adjustments, KB content gaps. Never be generic.
+
 Return ONLY valid JSON in this exact schema:
 {
   "overall_trend": "improving" | "declining" | "stable",
-  "strengths": ["specific strength 1", "specific strength 2", "specific strength 3"],
-  "improvements": ["specific area to improve 1", "specific area to improve 2"],
+  "strengths": ["what the Voice AI consistently does well — pattern-based, specific"],
+  "improvements": ["specific failure pattern with data — e.g. 'resolution_rate 52% avg — AI closes calls without confirming outcome'"],
   "action_items": [
-    {"priority": "high" | "medium" | "low", "action": "specific actionable step", "metric": "what to measure"}
+    {"priority": "high" | "medium" | "low", "action": "specific optimization step for the team", "metric": "what to measure to confirm improvement"}
   ],
   "score_summary": {
     "avg_overall": 75, "avg_guardrail": 80, "avg_resolution": 70,
     "avg_containment": 65, "avg_satisfaction": 0.72,
     "pass_rate": 0.67, "calls_analyzed": 3
   },
-  "coaching_note": "One paragraph personalized coaching message for the agent."
+  "coaching_note": "One paragraph analysis: what patterns emerged, what to prioritize in the next Voice AI iteration."
 }"""
     ),
 
@@ -538,21 +540,27 @@ TRANSCRIPT:"""
     ),
 
     "coaching_prompt": (
-        """You are Fin's AI coaching specialist for fintech customer support agents.
+        """You are a Voice AI performance analyst for Fin, a fintech customer support Voice AI.
+You will receive a list of completed call evaluations for the Fin Voice AI.
+Generate an optimization coaching pack that helps the product team improve Fin's performance.
+
+Be specific — identify recurring patterns: low rubric areas, common violations, escalation triggers, unresolved issue types.
+Output actionable recommendations: system prompt adjustments, workflow node changes, KB gap fills. Never be generic.
+
 Return ONLY valid JSON in this exact schema:
 {
   "overall_trend": "improving" | "declining" | "stable",
-  "strengths": ["specific strength 1", "specific strength 2", "specific strength 3"],
-  "improvements": ["specific area to improve 1", "specific area to improve 2"],
+  "strengths": ["what Fin consistently does well — pattern-based, specific"],
+  "improvements": ["specific failure pattern — e.g. 'resolution_rate 48% avg — Fin escalates fraud cases without attempting search_transactions first'"],
   "action_items": [
-    {"priority": "high" | "medium" | "low", "action": "specific actionable step", "metric": "what to measure"}
+    {"priority": "high" | "medium" | "low", "action": "specific optimization step for the team", "metric": "what to measure to confirm improvement"}
   ],
   "score_summary": {
     "avg_overall": 75, "avg_guardrail": 80, "avg_resolution": 70,
     "avg_containment": 65, "avg_satisfaction": 0.72,
     "pass_rate": 0.67, "calls_analyzed": 3
   },
-  "coaching_note": "One paragraph personalized coaching message for the agent."
+  "coaching_note": "One paragraph analysis: what patterns emerged across these calls, what to prioritize in the next Fin iteration."
 }"""
     ),
 
@@ -630,8 +638,17 @@ async def _seed_tenant_configs(db) -> None:
             fin_cfg.escalation_reasons         = SEED_FIN_CONFIG["escalation_reasons"]
             fin_cfg.support_categories         = SEED_FIN_CONFIG["support_categories"]
             fin_cfg.companion_mid_call_prompt  = SEED_FIN_CONFIG["companion_mid_call_prompt"]
-            print("Updated fin_demo config: voice_system_prompt + tool_configs + companion_mid_call_prompt.")
-        else:
+            fin_cfg.coaching_prompt            = SEED_FIN_CONFIG["coaching_prompt"]
+            print("Updated fin_demo config: voice_system_prompt + tool_configs + companion_mid_call_prompt + coaching_prompt.")
+
+        wavvy_result = await db.execute(
+            select(TenantConfig).where(TenantConfig.tenant_id == "wavvy_demo")
+        )
+        wavvy_cfg = wavvy_result.scalar_one_or_none()
+        if wavvy_cfg:
+            wavvy_cfg.coaching_prompt = SEED_WAVVY_CONFIG["coaching_prompt"]
+
+        if not fin_cfg:
             db.add(TenantConfig(**SEED_WAVVY_CONFIG))
             db.add(TenantConfig(**SEED_FIN_CONFIG))
             print("Seeded tenant configs: wavvy_demo (inactive) + fin_demo (active).")

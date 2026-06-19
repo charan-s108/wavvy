@@ -1,8 +1,7 @@
 import { useState } from 'react'
-import { AlertCircle, Wifi, WifiOff } from 'lucide-react'
+import { AlertCircle, WifiOff } from 'lucide-react'
 
-const BACKEND = import.meta.env.VITE_BACKEND_HTTP_URL || 'http://localhost:8000'
-const ADMIN_URL = 'https://wavvy-admin-mu.vercel.app'
+const BACKEND = import.meta.env.VITE_BACKEND_HTTP_URL || ''
 
 const Y = '#f4f73d'
 
@@ -198,13 +197,6 @@ export default function LoginPage({ onLogin }) {
           </button>
         </form>
 
-        {/* Footer hint */}
-        <p className="text-center text-[12px] text-white/20">
-          Admin?{' '}
-          <a href={ADMIN_URL} className="text-white/40 hover:text-white/70 underline underline-offset-2 transition-colors">
-            Open Admin Dashboard
-          </a>
-        </p>
       </div>
     </div>
   )

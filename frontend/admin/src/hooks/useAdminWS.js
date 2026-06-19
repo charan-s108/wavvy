@@ -11,9 +11,9 @@
  */
 import { useState, useEffect, useRef, useCallback } from 'react'
 
-const API    = import.meta.env.VITE_BACKEND_HTTP_URL  || 'http://localhost:8000'
-const WS_URL = import.meta.env.VITE_BACKEND_WS_URL
-  || API.replace(/^http/, 'ws')
+const API    = import.meta.env.VITE_BACKEND_HTTP_URL || ''
+const WS_URL = import.meta.env.VITE_BACKEND_WS_URL ||
+  (API ? API.replace(/^http/, 'ws') : `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}`)
 
 async function fetchJSON(path) {
   const r = await fetch(`${API}${path}`)

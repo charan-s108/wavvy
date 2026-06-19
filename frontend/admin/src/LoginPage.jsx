@@ -1,8 +1,7 @@
 import { useState } from 'react'
 import { AlertCircle, WifiOff } from 'lucide-react'
 
-const BACKEND = import.meta.env.VITE_BACKEND_HTTP_URL || 'http://localhost:8000'
-const AGENT_URL = 'https://wavvy-agent.vercel.app'
+const BACKEND = import.meta.env.VITE_BACKEND_HTTP_URL || ''
 
 const Y = '#f4f73d'
 
@@ -197,13 +196,6 @@ export default function LoginPage({ onLogin }) {
           </button>
         </form>
 
-        {/* Footer hint */}
-        <p className="text-center text-[12px] text-white/20">
-          Agent?{' '}
-          <a href={AGENT_URL} className="text-white/40 hover:text-white/70 underline underline-offset-2 transition-colors">
-            Open Agent Console
-          </a>
-        </p>
       </div>
     </div>
   )

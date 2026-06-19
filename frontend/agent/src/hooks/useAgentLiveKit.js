@@ -1,7 +1,7 @@
 import { useState, useCallback, useRef } from 'react'
 import { Room, RoomEvent } from 'livekit-client'
 
-const BACKEND = import.meta.env.VITE_BACKEND_HTTP_URL || 'http://localhost:8000'
+const BACKEND = import.meta.env.VITE_BACKEND_HTTP_URL || ''
 
 export function useAgentLiveKit() {
   const [connected, setConnected]   = useState(false)

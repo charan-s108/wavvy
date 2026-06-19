@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Save, RotateCcw, CheckCircle } from 'lucide-react'
 import PromptVariableHints from './PromptVariableHints'
 
-const API = import.meta.env.VITE_BACKEND_HTTP_URL || 'http://localhost:8000'
+const API = import.meta.env.VITE_BACKEND_HTTP_URL || ''
 const Y   = '#f4f73d'
 const B   = '#1b1d2a'
 

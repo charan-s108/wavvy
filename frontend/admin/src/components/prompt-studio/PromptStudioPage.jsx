@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { RefreshCw } from 'lucide-react'
 import PromptEditor from './PromptEditor'
 
-const API = import.meta.env.VITE_BACKEND_HTTP_URL || 'http://localhost:8000'
+const API = import.meta.env.VITE_BACKEND_HTTP_URL || ''
 const Y   = '#f4f73d'
 
 const TABS = [

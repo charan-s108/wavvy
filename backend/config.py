@@ -44,14 +44,13 @@ class Settings(BaseSettings):
 
     @property
     def allowed_origins(self) -> list[str]:
-        origins = [
+        if self.environment == "development":
+            return ["*"]
+        return [
             self.frontend_landing_url,
             self.frontend_agent_url,
             self.frontend_admin_url,
         ]
-        if self.environment == "development":
-            origins.append("*")
-        return origins
 
 
 settings = Settings()

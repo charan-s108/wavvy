@@ -11,12 +11,12 @@ const Y  = '#f4f73d'
 const Wa = (a) => `rgba(255,255,255,${a})`
 
 export default function Timeline({ events = [] }) {
-  const [open, setOpen] = useState(false)
+  const [open, setOpen] = useState(true)
 
   if (!events.length) return null
 
   return (
-    <div className="rounded-[14px] overflow-hidden"
+    <div className="rounded-[14px] overflow-hidden shrink-0"
       style={{ border: `1px solid ${Wa(0.07)}` }}>
 
       <button

@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { FileText, Trash2, Loader, CheckCircle2, Clock, AlertCircle, ChevronDown, ChevronUp } from 'lucide-react'
 import DocumentInspector from './DocumentInspector.jsx'
 
-const API = import.meta.env.VITE_BACKEND_HTTP_URL || 'http://localhost:8000'
+const API = import.meta.env.VITE_BACKEND_HTTP_URL || ''
 
 const Y  = '#f4f73d'
 const Ya = (a) => `rgba(244,247,61,${a})`

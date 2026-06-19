@@ -175,6 +175,156 @@ async def _backfill_kb_postgres(collections: dict) -> None:
         logger.info("KB backfill: synced %d doc(s) from ChromaDB → kb_documents", inserted)
 
 
+async def _backfill_call_fields() -> None:
+    """
+    One-time backfill for calls that completed before duration_secs, resolution,
+    and customer_id were written on call end. Safe to run repeatedly.
+    Also purges stub calls (no duration, no meaningful resolution) from the DB.
+    """
+    import re as _re
+
+    _WORD_TO_DIGIT = {
+        'zero': '0', 'one': '1', 'two': '2', 'three': '3', 'four': '4',
+        'five': '5', 'six': '6', 'seven': '7', 'eight': '8', 'nine': '9',
+    }
+    _STOP_WORDS = {
+        'hey', 'thanks', 'this', 'what', 'your', 'sure', 'done', 'please',
+        'sorry', 'great', 'okay', 'the', 'and', 'for', 'but', 'from', 'with',
+        'can', 'will', 'may', 'let', 'here', 'now', 'when', 'well', 'just',
+        'also', 'once', 'next', 'hi', 'i',
+    }
+
+    def _spoken_phones(text: str) -> list[str]:
+        """Extract phone numbers from spoken-digit sequences (≥6 consecutive digit words)."""
+        words = text.lower().split()
+        buf: list[str] = []
+        result: list[str] = []
+        for w in words:
+            clean = _re.sub(r'[^a-z]', '', w)
+            if clean in _WORD_TO_DIGIT:
+                buf.append(_WORD_TO_DIGIT[clean])
+            else:
+                if len(buf) >= 6:
+                    result.append(''.join(buf))
+                buf = []
+        if len(buf) >= 6:
+            result.append(''.join(buf))
+        return result
+
+    try:
+        async with AsyncSessionLocal() as db:
+            # Fix completed calls missing duration/resolution
+            r = await db.execute(text("""
+                UPDATE calls
+                SET
+                    duration_secs = EXTRACT(EPOCH FROM (ended_at - started_at))::INTEGER,
+                    resolution = CASE
+                        WHEN escalated = TRUE THEN 'escalated'
+                        ELSE 'resolved'
+                    END
+                WHERE status = 'completed'
+                  AND ended_at IS NOT NULL
+                  AND (duration_secs IS NULL OR resolution IS NULL)
+            """))
+            if r.rowcount:
+                logger.info("call backfill: fixed %d completed call(s) missing duration/resolution", r.rowcount)
+
+            # Purge stub calls — no duration, no resolution, and not escalated
+            d = await db.execute(text("""
+                DELETE FROM calls
+                WHERE duration_secs IS NULL
+                  AND escalated = FALSE
+                  AND (resolution IS NULL OR resolution NOT IN ('resolved', 'escalated'))
+            """))
+            if d.rowcount:
+                logger.info("call cleanup: deleted %d stub call(s) with no duration or resolution", d.rowcount)
+
+            # Backfill customer_id for unlinked calls.
+            # Pass 1: typed 10-digit phone numbers in voice_ai_summary.
+            # Pass 2: spoken-digit sequences from customer transcript turns.
+            # Pass 3: first name the AI addressed the customer by in voice_ai_summary.
+            unlinked_summary = await db.execute(text("""
+                SELECT id, voice_ai_summary FROM calls
+                WHERE customer_id IS NULL AND voice_ai_summary IS NOT NULL
+            """))
+            unlinked_rows = unlinked_summary.mappings().all()
+            linked = 0
+            linked_ids: set = set()
+
+            for row in unlinked_rows:
+                summary = row["voice_ai_summary"] or ""
+                phones = _re.findall(r'\b\d{10}\b', summary) + _spoken_phones(summary)
+                for phone in phones:
+                    cust = await db.execute(
+                        text("SELECT id FROM customers WHERE phone LIKE :s"),
+                        {"s": f"%{phone}"},
+                    )
+                    m = cust.first()
+                    if m:
+                        await db.execute(
+                            text("UPDATE calls SET customer_id = :cid WHERE id = :id"),
+                            {"cid": m[0], "id": row["id"]},
+                        )
+                        linked_ids.add(str(row["id"]))
+                        linked += 1
+                        break
+
+            # Pass 2: spoken phones from transcript turns
+            unlinked_transcripts = await db.execute(text("""
+                SELECT DISTINCT c.id, t.content
+                FROM calls c JOIN transcripts t ON t.call_id = c.id
+                WHERE c.customer_id IS NULL AND t.speaker = 'customer'
+            """))
+            for row in unlinked_transcripts.mappings().all():
+                if str(row["id"]) in linked_ids:
+                    continue
+                for phone in _spoken_phones(row["content"] or "") + _re.findall(r'\b\d{10}\b', row["content"] or ""):
+                    cust = await db.execute(
+                        text("SELECT id FROM customers WHERE phone LIKE :s"),
+                        {"s": f"%{phone}"},
+                    )
+                    m = cust.first()
+                    if m:
+                        await db.execute(
+                            text("UPDATE calls SET customer_id = :cid WHERE id = :id"),
+                            {"cid": m[0], "id": row["id"]},
+                        )
+                        linked_ids.add(str(row["id"]))
+                        linked += 1
+                        break
+
+            # Pass 3: first name from summary (pattern: ", Name!" or ", Name.")
+            unlinked_names = await db.execute(text("""
+                SELECT id, voice_ai_summary FROM calls
+                WHERE customer_id IS NULL AND voice_ai_summary IS NOT NULL
+            """))
+            for row in unlinked_names.mappings().all():
+                if str(row["id"]) in linked_ids:
+                    continue
+                names = _re.findall(r',\s+([A-Z][a-z]{2,12})[!?.]', row["voice_ai_summary"] or "")
+                for name in dict.fromkeys(n for n in names if n.lower() not in _STOP_WORDS):
+                    cust = await db.execute(
+                        text("SELECT id FROM customers WHERE name ILIKE :n"),
+                        {"n": f"{name}%"},
+                    )
+                    m = cust.first()
+                    if m:
+                        await db.execute(
+                            text("UPDATE calls SET customer_id = :cid WHERE id = :id"),
+                            {"cid": m[0], "id": row["id"]},
+                        )
+                        linked_ids.add(str(row["id"]))
+                        linked += 1
+                        break
+
+            if linked:
+                logger.info("call backfill: linked %d call(s) to customers via phone/name extraction", linked)
+
+            await db.commit()
+    except Exception:
+        logger.exception("_backfill_call_fields: unexpected error (non-fatal)")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Load active tenant config first — all voice/agent code depends on it
@@ -228,21 +378,14 @@ async def lifespan(app: FastAPI):
     # frontend sees an empty list even though RAG has content.
     await _backfill_kb_postgres(collections_dict)
 
+    # Backfill duration_secs + resolution for calls that ended before these fields
+    # were written on call close (historical calls all have NULL for both).
+    await _backfill_call_fields()
+
     # Agent connection registry
     app.state.connected_agents = {}
 
-    # Start reminder loop — T-24h and T-1h email reminders for confirmed demos
-    import asyncio as _asyncio
-    from voice.reminder_service import start_reminder_loop
-    reminder_task = _asyncio.create_task(start_reminder_loop())
-
     yield
-
-    reminder_task.cancel()
-    try:
-        await reminder_task
-    except _asyncio.CancelledError:
-        pass
 
     await openai_client.close()
 
@@ -251,7 +394,7 @@ app = FastAPI(title="Wavvy API", version="1.0.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=settings.allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

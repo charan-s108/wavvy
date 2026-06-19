@@ -1,9 +1,10 @@
 """
-Orchestration REST API — 3 endpoints.
+Orchestration REST API — 4 endpoints.
 
 POST /api/orchestration/actions/execute   — execute an approved action (via agent console)
 GET  /api/orchestration/actions           — list available actions + metadata
 GET  /api/orchestration/history/{call_id} — audit trail for a specific call
+GET  /api/orchestration/recent-actions    — latest N actions across all calls
 """
 import logging
 from datetime import datetime
@@ -102,6 +103,34 @@ async def get_action_history(call_id: str, db: AsyncSession = Depends(get_db)):
             "payload": row.payload,
             "result": row.result,
             "success": row.success,
+            "created_at": row.created_at.isoformat() if row.created_at else None,
+        }
+        for row in rows
+    ]
+
+
+@router.get("/recent-actions")
+async def get_recent_actions(limit: int = 20, db: AsyncSession = Depends(get_db)):
+    """Return the most recent HITL action audit log entries across all calls."""
+    from models.action_audit_log import ActionAuditLog
+    from sqlalchemy import desc
+
+    limit = max(1, min(limit, 100))
+    result = await db.execute(
+        select(ActionAuditLog)
+        .order_by(desc(ActionAuditLog.created_at))
+        .limit(limit)
+    )
+    rows = result.scalars().all()
+    return [
+        {
+            "id": str(row.id),
+            "call_id": row.call_id,
+            "action": row.action_name,
+            "approved_by": row.approved_by,
+            "success": row.success,
+            "payload": row.payload,
+            "result": row.result,
             "created_at": row.created_at.isoformat() if row.created_at else None,
         }
         for row in rows

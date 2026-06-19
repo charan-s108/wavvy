@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react'
 
-const API = import.meta.env.VITE_BACKEND_HTTP_URL || 'http://localhost:8000'
+const API = import.meta.env.VITE_BACKEND_HTTP_URL || ''
 
 const NODE_DEFAULTS = () => ({
   id:                   `node_${Date.now()}`,

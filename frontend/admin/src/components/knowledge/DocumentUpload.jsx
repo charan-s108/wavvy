@@ -1,7 +1,7 @@
 import { useState, useRef } from 'react'
 import { Upload, Loader, CheckCircle2, AlertCircle } from 'lucide-react'
 
-const API = import.meta.env.VITE_BACKEND_HTTP_URL || 'http://localhost:8000'
+const API = import.meta.env.VITE_BACKEND_HTTP_URL || ''
 const ACCEPTED = '.pdf,.docx,.doc,.txt,.md'
 
 const Y  = '#f4f73d'

@@ -3,7 +3,6 @@ from session.conversation_state import ConversationStage
 # Maps each workflow stage to the set of tools permitted at that point.
 # The LLM never decides permissions — this is server-authoritative.
 #
-# Wavvy demo tools: capture_lead, schedule_demo
 # Fin fintech tools (read): verify_account, send_otp, verify_otp, lookup_transaction,
 #                    search_transactions, check_payment_status,
 #                    get_account_holds, get_refund_status, get_dispute_status
@@ -23,18 +22,16 @@ _FIN_WRITE_TOOLS = {
 
 TOOL_PERMISSIONS: dict[ConversationStage, set[str]] = {
     ConversationStage.GREETING: {
-        "capture_lead", "verify_account", "escalate_to_human",
+        "verify_account", "escalate_to_human",
     },
     ConversationStage.DISCOVERY: {
-        "capture_lead", "verify_account", "escalate_to_human",
+        "verify_account", "escalate_to_human",
     },
     ConversationStage.VERIFICATION: {
-        "capture_lead", "schedule_demo",
         *_FIN_READ_TOOLS,
         "escalate_to_human",
     },
     ConversationStage.TOOL_EXECUTION: {
-        "capture_lead", "schedule_demo",
         *_FIN_READ_TOOLS,
         *_FIN_WRITE_TOOLS,
         "escalate_to_human", "cancel_escalation",

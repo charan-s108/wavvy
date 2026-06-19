@@ -1,17 +1,6 @@
 """
-Wavvy self-demo tool implementations.
-Tools: capture_lead, schedule_demo, cancel_demo, escalate_to_human.
+Fin fintech tool implementations.
 All async. Called only via execute_with_recovery() — never directly.
-
-schedule_demo responsibilities:
-  - Delegates slot resolution to scheduling_agent.resolve_slot()
-  - Returns needs_clarification=True when confidence is too low
-  - Returns needs_confirmation=True when an alternative slot is suggested
-  - Books directly when slot is confirmed (force_slot) or free
-
-cancel_demo responsibilities:
-  - Delegates to scheduling_agent.cancel_appointment()
-  - Returns success/failure with slot label for UI feedback
 """
 import asyncio
 import json
@@ -34,263 +23,6 @@ from constants.transaction_status import (
 from session.call_session import get_session, ACTIVE_CALLS
 
 logger = logging.getLogger(__name__)
-
-
-# ── capture_lead ─────────────────────────────────────────────────────────────
-
-async def capture_lead(
-    name: str,
-    email: str | None,
-    phone: str | None,
-    company: str | None,
-    intent: str,
-    call_id: str,
-) -> dict:
-    """
-    Saves lead info to the leads table.
-    Returns {success, lead_id, fast_response_key}.
-    Idempotent: if call_id already has a lead row, upserts it.
-    """
-    async with _db_module.AsyncSessionLocal() as db:
-        # Check for existing lead on this call
-        existing = await db.execute(
-            text("SELECT id FROM leads WHERE call_id = :call_id"),
-            {"call_id": call_id},
-        )
-        row = existing.mappings().first()
-
-        if row:
-            # Update existing lead
-            await db.execute(
-                text("""
-                    UPDATE leads
-                    SET name = COALESCE(:name, name),
-                        email = COALESCE(:email, email),
-                        phone = COALESCE(:phone, phone),
-                        company = COALESCE(:company, company),
-                        intent = :intent
-                    WHERE call_id = :call_id
-                """),
-                {
-                    "name": name, "email": email, "phone": phone,
-                    "company": company, "intent": intent, "call_id": call_id,
-                },
-            )
-            lead_id = str(row["id"])
-        else:
-            # Insert new lead
-            result = await db.execute(
-                text("""
-                    INSERT INTO leads (call_id, name, email, phone, company, intent)
-                    VALUES (:call_id, :name, :email, :phone, :company, :intent)
-                    RETURNING id
-                """),
-                {
-                    "call_id": call_id, "name": name, "email": email,
-                    "phone": phone, "company": company, "intent": intent,
-                },
-            )
-            lead_id = str(result.scalar())
-
-        await db.commit()
-
-    # Update session lead_id
-    session = get_session(call_id)
-    if session:
-        session.lead_id = lead_id
-
-    logger.info(json.dumps({
-        "call_id": call_id, "tool": "capture_lead",
-        "lead_id": lead_id, "name": name, "intent": intent,
-    }))
-
-    return {
-        "success": True,
-        "lead_id": lead_id,
-        "fast_response_key": "lead_captured",
-        "template_vars": {"name": name},
-    }
-
-
-# ── schedule_demo ─────────────────────────────────────────────────────────────
-
-async def schedule_demo(
-    lead_id: str | None,
-    name: str,
-    email: str | None,
-    preferred_time: str,
-    call_id: str,
-    force_slot: dict | None = None,   # pre-confirmed slot from pending confirmation
-    user_timezone: str = "Asia/Kolkata",
-    **_extra,
-) -> dict:
-    """
-    Resolve a preferred time and book a demo appointment.
-
-    Possible outcomes:
-      needs_clarification=True  → parse confidence too low; return clarification prompt
-      needs_confirmation=True   → alternative slot found; wait for user confirm
-      success=True              → booked; return confirmation details
-    """
-    from agents.scheduling_agent import (
-        resolve_slot, send_confirmation_email, _slot_key,
-    )
-    from datetime import datetime as _dt
-
-    if force_slot:
-        # User already confirmed a suggested alternative — book directly
-        confirmed_time = _dt.fromisoformat(force_slot["confirmed_time_iso"])
-        lbl       = force_slot["slot_label"]
-        lbl_short = force_slot["slot_label_short"]
-    else:
-        slot_info = await resolve_slot(preferred_time, user_timezone)
-
-        # Low confidence → ask for clarification; do NOT book
-        if slot_info.get("needs_clarification"):
-            return {
-                "success":             True,
-                "needs_clarification": True,
-                "clarification_key":   slot_info["clarification_key"],
-                "clarification_vars":  slot_info["clarification_vars"],
-                "parse_confidence":    slot_info.get("parse_confidence", 0.0),
-            }
-
-        if slot_info.get("alt_reason") == "no_slots":
-            return {
-                "success": False,
-                "fast_response_key": "no_slots_available",
-            }
-
-        confirmed_time = slot_info["confirmed_time"]
-        lbl            = slot_info["slot_label"]
-        lbl_short      = slot_info["slot_label_short"]
-        is_alt         = slot_info.get("is_alternative", False)
-        alt_reason     = slot_info.get("alt_reason")
-
-        if is_alt:
-            # Suggest alternative; do NOT book until user confirms
-            suggest_key = (
-                "demo_slot_suggest_out_of_hours"
-                if alt_reason == "out_of_hours"
-                else "demo_slot_suggest_conflict"
-            )
-            return {
-                "success":           True,
-                "needs_confirmation": True,
-                "pending_slot": {
-                    "confirmed_time_iso": confirmed_time.isoformat(),
-                    "slot_label":         lbl,
-                    "slot_label_short":   lbl_short,
-                    "alt_reason":         alt_reason,
-                },
-                "fast_response_key": suggest_key,
-                "template_vars":     {"slot_label": lbl_short},
-            }
-
-    # ── Book the appointment ──────────────────────────────────────────────────
-    sk = _slot_key(confirmed_time)
-
-    async with _db_module.AsyncSessionLocal() as db:
-        if not lead_id:
-            result = await db.execute(
-                text("""
-                    INSERT INTO leads (call_id, name, email, intent, status)
-                    VALUES (:call_id, :name, :email, 'demo_request', 'demo_scheduled')
-                    RETURNING id
-                """),
-                {"call_id": call_id, "name": name, "email": email},
-            )
-            lead_id = str(result.scalar())
-        else:
-            await db.execute(
-                text("UPDATE leads SET status = 'demo_scheduled' WHERE id = :id"),
-                {"id": lead_id},
-            )
-
-        try:
-            result = await db.execute(
-                text("""
-                    INSERT INTO demo_appointments
-                        (lead_id, call_id, requested_time, confirmed_time,
-                         slot_label, slot_key, user_timezone, status)
-                    VALUES
-                        (:lead_id, :call_id, :req, :confirmed,
-                         :lbl, :slot_key, :tz, 'confirmed')
-                    RETURNING id
-                """),
-                {
-                    "lead_id":   lead_id, "call_id": call_id,
-                    "req":       preferred_time, "confirmed": confirmed_time,
-                    "lbl":       lbl, "slot_key": sk, "tz": user_timezone,
-                },
-            )
-            appointment_id = str(result.scalar())
-            await db.commit()
-        except Exception as exc:
-            # Unique constraint violation (concurrent booking race) — surface cleanly
-            if "uniq_confirmed_slot" in str(exc) or "unique" in str(exc).lower():
-                logger.warning(json.dumps({
-                    "call_id": call_id, "tool": "schedule_demo",
-                    "event": "slot_race_condition", "slot_key": sk,
-                }))
-                return {
-                    "success": False,
-                    "fast_response_key": "slot_just_taken",
-                }
-            raise
-
-    if email:
-        asyncio.create_task(send_confirmation_email(name, email, lbl, call_id))
-
-    logger.info(json.dumps({
-        "call_id": call_id, "tool": "schedule_demo",
-        "lead_id": lead_id, "appointment_id": appointment_id,
-        "requested_time": preferred_time, "confirmed_time": str(confirmed_time),
-        "slot_key": sk, "force_slot": bool(force_slot),
-    }))
-
-    return {
-        "success":           True,
-        "appointment_id":    appointment_id,
-        "fast_response_key": "demo_scheduled",
-        "template_vars": {
-            "name":       name,
-            "email":      email or "your email",
-            "slot_label": lbl_short,
-        },
-    }
-
-
-# ── cancel_demo ───────────────────────────────────────────────────────────────
-
-async def cancel_demo(call_id: str, **_extra) -> dict:
-    """
-    Cancel the caller's most recent confirmed demo appointment.
-    Delegates to scheduling_agent.cancel_appointment for DB + email.
-    """
-    from agents.scheduling_agent import cancel_appointment
-    result = await cancel_appointment(call_id)
-
-    if not result.get("success"):
-        reason = result.get("reason", "unknown")
-        fast_key = "no_appointment_found" if reason == "no_active_appointment" else "tool_error"
-        return {"success": False, "fast_response_key": fast_key}
-
-    logger.info(json.dumps({
-        "call_id": call_id, "tool": "cancel_demo",
-        "appointment_id": result.get("appointment_id"),
-        "slot_label": result.get("slot_label"),
-    }))
-
-    return {
-        "success":           True,
-        "appointment_id":    result.get("appointment_id"),
-        "fast_response_key": "demo_cancelled",
-        "template_vars": {
-            "name":       result.get("name") or "",
-            "slot_label": result.get("slot_label") or "your demo",
-        },
-    }
 
 
 # ── escalate_to_human ─────────────────────────────────────────────────────────
@@ -1092,6 +824,34 @@ async def report_fraud(transaction_id: str, fraud_type: str, call_id: str) -> di
     if status == FRAUD_REVERSED:
         return {"success": False, "fast_response_key": "fraud_transaction_reversed"}
 
+    # Check for an existing active fraud case on this transaction regardless of
+    # transaction status — prevents duplicate cases when status was previously
+    # changed to refund_initiated, completed, etc.
+    async with _db_module.AsyncSessionLocal() as db:
+        existing_case = await db.execute(
+            text("""
+                SELECT fraud_number FROM fraud_cases
+                WHERE transaction_id = :tid
+                  AND status NOT IN ('resolved', 'closed', 'rejected')
+                LIMIT 1
+            """),
+            {"tid": txn_row["id"]},
+        )
+        existing = existing_case.mappings().first()
+    if existing:
+        existing_num = existing["fraud_number"]
+        logger.info("report_fraud: case %s already exists for %s — returning existing",
+                    existing_num, txn_upper)
+        return {
+            "success": True,
+            "fraud_number": existing_num,
+            "fast_response_key": "fraud_already_reported",
+            "message": (
+                f"A fraud case {existing_num} is already open for this transaction "
+                f"and is currently under review. No new case has been created."
+            ),
+        }
+
     async with _db_module.AsyncSessionLocal() as db:
         fraud_number = await next_fraud_number(db)
 
@@ -1115,6 +875,28 @@ async def report_fraud(transaction_id: str, fraud_type: str, call_id: str) -> di
                 "call_id": call_id,
             },
         )
+        # Place a fraud hold on the account so the Agent Console can later lift it
+        await db.execute(
+            text("""
+                UPDATE customers
+                SET fraud_hold_active = true,
+                    fraud_hold_placed_at = now()
+                WHERE id = :cid
+            """),
+            {"cid": _uuid.UUID(session.customer_id)},
+        )
+        await db.execute(
+            text("""
+                INSERT INTO account_holds
+                    (customer_id, hold_type, reason, status, placed_at, placed_by, call_id)
+                VALUES (:cid, 'fraud', :reason, 'active', now(), 'voice_ai', :call_id)
+            """),
+            {
+                "cid": _uuid.UUID(session.customer_id),
+                "reason": f"Fraud reported via voice AI — {fraud_number}",
+                "call_id": call_id,
+            },
+        )
         await db.commit()
 
     # Update session cache
@@ -1122,6 +904,8 @@ async def report_fraud(transaction_id: str, fraud_type: str, call_id: str) -> di
     for t in (cached.get("transactions") or []):
         if t.get("txn_number", "").upper() == txn_upper:
             t["status"] = FRAUD_REPORTED
+    if cached:
+        cached["fraud_hold_active"] = True
 
     logger.info(json.dumps({
         "call_id": call_id, "tool": "report_fraud",
@@ -1282,28 +1066,7 @@ async def get_dispute_status(transaction_id: str | None, call_id: str) -> dict:
 
 async def execute_tool(tool_name: str, args: dict, call_id: str) -> dict:
     """Routes tool_name to the correct implementation."""
-    if tool_name == "capture_lead":
-        return await capture_lead(
-            name=args.get("name", ""),
-            email=args.get("email"),
-            phone=args.get("phone"),
-            company=args.get("company"),
-            intent=args.get("intent", "unknown"),
-            call_id=call_id,
-        )
-    elif tool_name == "schedule_demo":
-        return await schedule_demo(
-            lead_id=args.get("lead_id"),
-            name=args.get("name", ""),
-            email=args.get("email"),
-            preferred_time=args.get("preferred_time", "TBD"),
-            call_id=call_id,
-            force_slot=args.get("force_slot"),
-            user_timezone=args.get("user_timezone", "Asia/Kolkata"),
-        )
-    elif tool_name == "cancel_demo":
-        return await cancel_demo(call_id=call_id)
-    elif tool_name == "verify_account":
+    if tool_name == "verify_account":
         return await verify_account(
             phone=args.get("phone", ""),
             call_id=call_id,
