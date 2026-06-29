@@ -26,7 +26,7 @@ echo "▶ Seeding demo data..."
 python seed.py || echo "   Seed skipped (already up to date)"
 
 echo "▶ Starting Wavvy API..."
-uvicorn main:app --host 0.0.0.0 --port 7860 --workers 2 &
+uvicorn main:app --host 0.0.0.0 --port 7860 --workers 1 &
 API_PID=$!
 
 echo "▶ Starting LiveKit Worker..."

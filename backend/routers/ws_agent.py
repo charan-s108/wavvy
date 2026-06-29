@@ -26,16 +26,51 @@ def _get_statuses(app_state) -> dict:
 
 
 def get_active_agent_count(app_state) -> int:
-    """Count agents currently in 'active' status."""
+    """Count agents currently in 'active' status (in-memory, single-process only)."""
     connected = getattr(app_state, "connected_agents", {})
     statuses  = _get_statuses(app_state)
     return sum(1 for aid in connected if statuses.get(aid, "active") == "active")
 
 
+async def _set_agent_db_status(email: str, status: str) -> None:
+    """Persist agent online/offline status to DB — visible across all uvicorn workers."""
+    try:
+        from database import AsyncSessionLocal
+        from sqlalchemy import text
+        async with AsyncSessionLocal() as db:
+            await db.execute(
+                text("UPDATE agent_profiles SET status = :status WHERE email = :email"),
+                {"status": status, "email": email},
+            )
+            await db.commit()
+    except Exception as exc:
+        logger.warning("Failed to persist agent status to DB (%s → %s): %s", email, status, exc)
+
+
+async def _count_online_agents_from_db() -> int:
+    """Count agents marked online in the DB — cross-process/cross-worker safe."""
+    try:
+        from database import AsyncSessionLocal
+        from sqlalchemy import text
+        async with AsyncSessionLocal() as db:
+            result = await db.execute(
+                text("SELECT COUNT(*) FROM agent_profiles WHERE status = 'online'")
+            )
+            return result.scalar() or 0
+    except Exception:
+        return 0
+
+
 @router.get("/api/agents/availability")
 async def agent_availability(request: Request):
-    count = get_active_agent_count(request.app.state)
-    return {"available": count > 0, "active_count": count}
+    # Primary: DB query — works correctly with multiple uvicorn workers.
+    # Fallback to in-memory count if DB is unreachable.
+    db_count = await _count_online_agents_from_db()
+    if db_count > 0:
+        return {"available": True, "active_count": db_count}
+    # Fallback: in-process count (catches the brief DB-update lag on first connect)
+    mem_count = get_active_agent_count(request.app.state)
+    return {"available": mem_count > 0, "active_count": mem_count}
 
 
 async def route_event_to_agent(app_state, event: dict) -> bool:
@@ -86,6 +121,8 @@ async def agent_websocket(websocket: WebSocket, token: str = ""):
     # Default to active when they connect
     _get_statuses(app_state)[agent_id] = "active"
     logger.info(f"Agent connected: {agent_id} ({agent_name})")
+    # Persist to DB so availability check works across all uvicorn workers
+    asyncio.create_task(_set_agent_db_status(agent_email, "online"))
 
     # Flush any queued escalations that arrived while no agent was connected
     pending: list = getattr(app_state, "pending_escalations", [])
@@ -177,6 +214,11 @@ async def agent_websocket(websocket: WebSocket, token: str = ""):
                 if new_status in ("active", "busy", "inactive"):
                     _get_statuses(app_state)[agent_id] = new_status
                     logger.info(f"Agent {agent_name} status → {new_status}")
+                # Map in-memory status to DB status column values
+                _db_status_map = {"active": "online", "busy": "busy", "inactive": "break"}
+                asyncio.create_task(
+                    _set_agent_db_status(agent_email, _db_status_map.get(new_status, "online"))
+                )
                 await websocket.send_text(json.dumps({
                     "type": "status_updated",
                     "status": _get_statuses(app_state).get(agent_id, "active"),
@@ -303,6 +345,8 @@ async def agent_websocket(websocket: WebSocket, token: str = ""):
         app_state.connected_agents.pop(agent_id, None)
         _get_statuses(app_state).pop(agent_id, None)
         logger.info(f"Agent disconnected: {agent_id} ({agent_name})")
+        # Mark offline in DB so availability check reflects the disconnect across all workers
+        asyncio.create_task(_set_agent_db_status(agent_email, "offline"))
 
 
 async def deliver_incoming_call(

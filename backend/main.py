@@ -392,6 +392,17 @@ async def lifespan(app: FastAPI):
     # Agent connection registry
     app.state.connected_agents = {}
 
+    # Reset all agent statuses to 'offline' on startup — clears stale 'online'
+    # entries left over from a previous crash that prevented the WS disconnect
+    # handler from running.
+    try:
+        from sqlalchemy import text as _text
+        async with AsyncSessionLocal() as _db:
+            await _db.execute(_text("UPDATE agent_profiles SET status = 'offline'"))
+            await _db.commit()
+    except Exception as _exc:
+        logger.warning("Could not reset agent statuses on startup: %s", _exc)
+
     yield
 
     await openai_client.close()
