@@ -146,13 +146,24 @@ async def _embed_via_hf_api(texts: list[str]) -> list[list[float]]:
     """
     Calls the HF feature-extraction pipeline API and L2-normalises the result
     to match the vectors stored by local sentence-transformers (normalize_embeddings=True).
+    Retries up to 3 times with exponential backoff for transient DNS/network failures.
     """
     headers = {"Authorization": f"Bearer {_hf_token}"}
     payload = {"inputs": texts, "options": {"wait_for_model": True}}
 
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        resp = await client.post(_HF_API_URL, headers=headers, json=payload)
-        resp.raise_for_status()
+    last_exc: Exception | None = None
+    for attempt in range(3):
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                resp = await client.post(_HF_API_URL, headers=headers, json=payload)
+                resp.raise_for_status()
+            break
+        except (httpx.ConnectError, httpx.TimeoutException) as exc:
+            last_exc = exc
+            if attempt < 2:
+                await asyncio.sleep(2 ** attempt)  # 1s, 2s
+    else:
+        raise last_exc  # type: ignore[misc]
 
     raw: list[list[float]] = resp.json()
 

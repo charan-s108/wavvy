@@ -43,7 +43,7 @@ if __name__ == "__main__":
             api_key=settings.livekit_api_key,
             api_secret=settings.livekit_api_secret,
             # Production resource limits
-            job_memory_limit_mb=512,      # OOM-kill runaway subprocesses
+            job_memory_limit_mb=2048,     # OOM-kill runaway subprocesses (VAD+plugins baseline ~400 MB)
             load_threshold=0.80,          # reject new jobs before overload
             drain_timeout=300,            # 5 min grace on SIGTERM
             num_idle_processes=2,         # warm pool: first-call latency ~0
